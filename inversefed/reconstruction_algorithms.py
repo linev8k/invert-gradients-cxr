@@ -181,6 +181,9 @@ class GradientReconstructor():
                         else:
                             raise ValueError()
 
+                    if (iteration+1)%10 == 0:
+                        print(f'It: {iteration}. Rec. loss: {rec_loss.item():2.4f}.')
+
                 if dryrun:
                     break
         except KeyboardInterrupt:
