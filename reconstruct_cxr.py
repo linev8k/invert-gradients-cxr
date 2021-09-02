@@ -17,6 +17,7 @@ Set as arguments:
 - save_image (save output)
 - deterministic flag
 - dryrun flag (run everything for one step for testing)
+- name (for the experiment)
 """
 import os
 
@@ -39,7 +40,7 @@ from collections import defaultdict
 import datetime
 import time
 
-torch.backends.cudnn.benchmark = inversefed.consts.BENCHMARK
+# torch.backends.cudnn.benchmark = inversefed.consts.BENCHMARK
 # use_cuda = torch.cuda.is_available()
 # device = 'cuda' if use_cuda else 'cpu'
 
@@ -51,14 +52,30 @@ defs = inversefed.training_strategy('conservative')
 defs.epochs = args.epochs
 
 # more parameters
-num_classes = 10
+num_classes = 2
 num_channels = 3
 random_seed = 207
+
 demo_img_path = 'xray_test.jpg'
 img_size = (224,224)
 img_label = 1
 
-# 100% reproducibility?
+set_config = dict(signed=args.signed,
+              boxed=args.boxed,
+              cost_fn=args.cost_fn,
+              indices='def',
+              weights='equal',
+              lr=0.1,
+              optim=args.optimizer,
+              restarts=args.restarts,
+              max_iterations=10,
+              total_variation=args.tv,
+              init='randn',
+              filter='none',
+              lr_decay=True,
+              scoring_choice='loss')
+
+# not reproducible...
 if args.deterministic:
     inversefed.utils.set_deterministic()
     inversefed.utils.set_random_seed(random_seed)
@@ -85,22 +102,21 @@ if __name__ == "__main__":
     # if args.dataset == 'ImageNet':
     if args.model == 'ResNet152':
         model = torchvision.models.resnet152(pretrained=args.trained_model)
-        model_seed = random_seed
+        model_seed = None
     elif args.model == 'ResNet18':
         model = torchvision.models.resnet18(pretrained=args.trained_model)
-        model_seed = random_seed
-    else:
+        model_seed = None
+    else: # substitute this by other model that I want to use
         model, model_seed = inversefed.construct_model(args.model, num_classes=num_classes, num_channels=num_channels)
         print('Model seed: ', model_seed)
 
     model.to(**setup)
     model.eval()
 
-    training_stats = defaultdict(list)
-
     # Choose example images from the validation set or from third-party sources
     if args.num_images == 1:
         if args.target_id == -1:  # demo image
+
             # Specify PIL filter for lower pillow versions
             ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).convert('RGB').resize(img_size, Image.BICUBIC)) / 255, **setup)
             # print(ground_truth)
@@ -110,7 +126,8 @@ if __name__ == "__main__":
             else:
                 labels = torch.as_tensor((5,), device=setup['device'])
             target_id = -1
-        else: # when using a predefined dataset
+
+        else: # when using a predefined dataset, not relevant here
             if args.target_id is None:
                 target_id = np.random.randint(len(validloader.dataset))
             else:
@@ -148,7 +165,7 @@ if __name__ == "__main__":
         img_shape = (3, ground_truth.shape[2], ground_truth.shape[3])
 
     # Run reconstruction
-    if args.accumulation == 0:
+    if args.accumulation == 0: # one epoch
 
         model.zero_grad()
         target_loss, _, _ = loss_fn(model(ground_truth), labels)
@@ -177,20 +194,21 @@ if __name__ == "__main__":
             model.eval()
 
         if args.optim == 'ours':
-            config = dict(signed=args.signed,
-                          boxed=args.boxed,
-                          cost_fn=args.cost_fn,
-                          indices='def',
-                          weights='equal',
-                          lr=0.1,
-                          optim=args.optimizer,
-                          restarts=args.restarts,
-                          max_iterations=1000,
-                          total_variation=args.tv,
-                          init='randn',
-                          filter='none',
-                          lr_decay=True,
-                          scoring_choice='loss')
+            # config = dict(signed=args.signed,
+            #               boxed=args.boxed,
+            #               cost_fn=args.cost_fn,
+            #               indices='def',
+            #               weights='equal',
+            #               lr=0.1,
+            #               optim=args.optimizer,
+            #               restarts=args.restarts,
+            #               max_iterations=1000,
+            #               total_variation=args.tv,
+            #               init='randn',
+            #               filter='none',
+            #               lr_decay=True,
+            #               scoring_choice='loss')
+            config = set_config
 
     #     elif args.optim == 'zhu':
     #         config = dict(signed=False,
@@ -210,6 +228,7 @@ if __name__ == "__main__":
     #
         rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images)
         output, stats = rec_machine.reconstruct(input_gradient, labels, img_shape=img_shape, dryrun=args.dryrun)
+
 
     else:
         pass
@@ -257,10 +276,13 @@ if __name__ == "__main__":
     #     output, stats = rec_machine.reconstruct(input_parameters, labels, img_shape=img_shape, dryrun=args.dryrun)
     #
     #
+
     # Compute stats
     test_mse = (output - ground_truth).pow(2).mean().item()
     feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
     test_psnr = inversefed.metrics.psnr(output, ground_truth, factor=1 / ds)
+
+    print(stats)
 
 
     # Save the resulting image
@@ -269,12 +291,12 @@ if __name__ == "__main__":
         output_denormalized = torch.clamp(output * ds + dm, 0, 1)
         # rec_filename = (f'{validloader.dataset.classes[labels][0]}_{"trained" if args.trained_model else ""}'
                         # f'{args.model}_{args.cost_fn}-{args.target_id}.png')
-        rec_filename = 'rec_img.png'
+        rec_filename = f'{args.name}_rec_img_idx{stats["best_exp"]}.png'
         torchvision.utils.save_image(output_denormalized, os.path.join(args.image_path, rec_filename))
 
         gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
         # gt_filename = (f'{validloader.dataset.classes[labels][0]}_ground_truth-{args.target_id}.png')
-        gt_filename = 'gt_img.png'
+        gt_filename = f'{args.name}_gt_img.png'
         torchvision.utils.save_image(gt_denormalized, os.path.join(args.image_path, gt_filename))
     else:
         rec_filename = None
@@ -300,6 +322,7 @@ if __name__ == "__main__":
                                    tv=args.tv,
 
                                    rec_loss=stats["opt"],
+                                   best_idx=stats["best_exp"],
                                    psnr=test_psnr,
                                    test_mse=test_mse,
                                    feat_mse=feat_mse,

@@ -1,7 +1,9 @@
 """Mechanisms for image reconstruction from parameter gradients."""
 
 import torch
+import torchvision
 from collections import defaultdict, OrderedDict
+import matplotlib.pyplot as plt
 from inversefed.nn import MetaMonkey
 from .metrics import total_variation as TV
 from .metrics import InceptionScore
@@ -91,7 +93,7 @@ class GradientReconstructor():
 
         try:
             for trial in range(self.config['restarts']):
-                x_trial, labels = self._run_trial(x[trial], input_data, labels, dryrun=dryrun)
+                x_trial, labels = self._run_trial(trial, x[trial], input_data, labels, dryrun=dryrun)
                 # Finalize
                 scores[trial] = self._score_trial(x_trial, input_data, labels)
                 x[trial] = x_trial
@@ -109,7 +111,9 @@ class GradientReconstructor():
         else:
             print('Choosing optimal result ...')
             scores = scores[torch.isfinite(scores)]  # guard against NaN/-Inf scores?
+            stats['scores'] = scores
             optimal_index = torch.argmin(scores)
+            stats['best_exp'] = optimal_index.item()
             print(f'Optimal result score: {scores[optimal_index]:2.4f}')
             stats['opt'] = scores[optimal_index].item()
             x_optimal = x[optimal_index]
@@ -127,7 +131,7 @@ class GradientReconstructor():
         else:
             raise ValueError()
 
-    def _run_trial(self, x_trial, input_data, labels, dryrun=False):
+    def _run_trial(self, trial, x_trial, input_data, labels, dryrun=False):
         x_trial.requires_grad = True
         if self.reconstruct_label:
             output_test = self.model(x_trial)
@@ -151,6 +155,13 @@ class GradientReconstructor():
             else:
                 raise ValueError()
 
+        # save intermediate stats
+        save_every = max(int(self.config['max_iterations'] / 50), 1)
+        trial_img_history = []
+        trial_stats = defaultdict(list)
+        trial_stats['name'] = f'trial{trial}'
+        trial_stats['save_every']=save_every
+
         max_iterations = self.config['max_iterations']
         dm, ds = self.mean_std
         if self.config['lr_decay']:
@@ -162,6 +173,12 @@ class GradientReconstructor():
             for iteration in range(max_iterations):
                 closure = self._gradient_closure(optimizer, x_trial, input_data, labels)
                 rec_loss = optimizer.step(closure)
+
+                trial_stats['rec_loss'].append(rec_loss.item())
+                if iteration % save_every == 0:
+                    trial_img_history.append(x_trial) # append as image not tensor
+                    self._save_trial_img(trial_img_history, trial_stats)
+
                 if self.config['lr_decay']:
                     scheduler.step()
 
@@ -248,6 +265,23 @@ class GradientReconstructor():
         print(f'Optimal result score: {stats["opt"]:2.4f}')
         return x_optimal, stats
 
+    def _save_trial_img(self, trial_history, trial_stats):
+
+        dm, ds = self.mean_std
+        plot_cols = 10
+        plot_rows = 5
+
+        for img_idx in range(len(trial_history[0])): # iterate through number of reconstructed images
+            plt.figure(figsize=(12, 8))
+            plt.axis('off')
+            for i in range(len(trial_history)): # iterate through image history
+                denorm_img = torchvision.transforms.ToPILImage()(torch.clamp(trial_history[i][img_idx] * ds + dm, 0, 1)) # denormalize image
+                plt.subplot(plot_rows, plot_cols, i+1)
+                plt.imshow(denorm_img)
+                plt.title(str(i))
+                plt.axis('off')
+            plt.savefig(f"trial_histories/{trial_stats['name']}_history.png")
+            plt.close()
 
 
 class FedAvgReconstructor(GradientReconstructor):
