@@ -5,6 +5,7 @@ import torchvision
 from collections import defaultdict, OrderedDict
 import matplotlib.pyplot as plt
 from inversefed.nn import MetaMonkey
+from inversefed.utils import save_to_table
 from .metrics import total_variation as TV
 from .metrics import InceptionScore
 from .medianfilt import MedianPool2d
@@ -60,6 +61,8 @@ class GradientReconstructor():
 
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
         self.iDLG = True
+
+        self.exp_stats = []
 
     def reconstruct(self, input_data, labels, img_shape=(3, 32, 32), dryrun=False, eval=True, tol=None):
         """Reconstruct image from gradient."""
@@ -157,7 +160,6 @@ class GradientReconstructor():
 
         # save intermediate stats
         save_every = max(int(self.config['max_iterations'] / 50), 1)
-        trial_img_history = []
         trial_stats = defaultdict(list)
         trial_stats['name'] = f'trial{trial}'
         trial_stats['save_every']=save_every
@@ -174,10 +176,11 @@ class GradientReconstructor():
                 closure = self._gradient_closure(optimizer, x_trial, input_data, labels)
                 rec_loss = optimizer.step(closure)
 
-                trial_stats['rec_loss'].append(rec_loss.item())
                 if iteration % save_every == 0:
-                    trial_img_history.append(x_trial) # append as image not tensor
-                    self._save_trial_img(trial_img_history, trial_stats)
+                    trial_stats['rec_loss'].append(rec_loss.item())
+                    trial_stats['history'].append(x_trial.detach())
+                    trial_stats['idx'].append(iteration)
+                    self._save_trial_img(trial_stats)
 
                 if self.config['lr_decay']:
                     scheduler.step()
@@ -203,6 +206,8 @@ class GradientReconstructor():
 
                 if dryrun:
                     break
+            # does not save it in column but in row...
+            self.exp_stats.append(trial_stats)
         except KeyboardInterrupt:
             print(f'Recovery interrupted manually in iteration {iteration}!')
             pass
@@ -265,12 +270,12 @@ class GradientReconstructor():
         print(f'Optimal result score: {stats["opt"]:2.4f}')
         return x_optimal, stats
 
-    def _save_trial_img(self, trial_history, trial_stats):
+    def _save_trial_img(self, trial_stats):
 
         dm, ds = self.mean_std
         plot_cols = 10
         plot_rows = 5
-
+        trial_history = trial_stats['history']
         for img_idx in range(len(trial_history[0])): # iterate through number of reconstructed images
             plt.figure(figsize=(12, 8))
             plt.axis('off')

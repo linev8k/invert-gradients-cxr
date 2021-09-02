@@ -32,6 +32,7 @@ from torchvision import transforms
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+import csv
 
 import inversefed
 from inversefed.data.loss import Classification
@@ -68,7 +69,7 @@ set_config = dict(signed=args.signed,
               lr=0.1,
               optim=args.optimizer,
               restarts=args.restarts,
-              max_iterations=10,
+              max_iterations=20_000,
               total_variation=args.tv,
               init='randn',
               filter='none',
@@ -282,7 +283,6 @@ if __name__ == "__main__":
     feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
     test_psnr = inversefed.metrics.psnr(output, ground_truth, factor=1 / ds)
 
-    print(stats)
 
 
     # Save the resulting image
@@ -302,8 +302,20 @@ if __name__ == "__main__":
         rec_filename = None
         gt_filename = None
 
+    # save stats
+    for trial in rec_machine.exp_stats:
+        print(trial['history'])
+        mses = [((rec_img - ground_truth).pow(2).mean().item()) for rec_img in trial['history']]
+        psnrs = [(inversefed.metrics.psnr(rec_img, ground_truth, factor=1 / ds)) for rec_img in trial['history']]
+        all_metrics = [trial['idx'], trial['rec_loss'], mses, psnrs]
+        with open(f'trial_histories/{args.name}_{trial["name"]}.csv', 'w') as f:
+            header = ['iteration', 'loss', 'mse', 'psnr']
+            writer = csv.writer(f)
+            writer.writerow(header)
+            writer.writerows(zip(*all_metrics))
 
-    # Save to a table:
+
+    # save parameters
     print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} | FMSE: {feat_mse:2.4e} |")
 
     inversefed.utils.save_to_table(args.table_path, name=f'exp_{args.name}', dryrun=args.dryrun,
