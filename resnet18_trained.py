@@ -52,7 +52,7 @@ def plot(tensor):
             axes[i].imshow(im.permute(1, 2, 0).cpu())
         plt.show()
 
-tmp_datum = Image.open('moonrisek.jpg').convert('RGB')
+tmp_datum = Image.open('mandalorian.jpeg').convert('RGB')
 tmp_datum = tt(tmp_datum).to(device)
 img = tmp_datum.view(1, *tmp_datum.size())
 tmp_label = torch.Tensor([1]).long().to(device)

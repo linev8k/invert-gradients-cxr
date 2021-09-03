@@ -28,6 +28,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(gpu) for gpu in selected_gpus
 import torch
 import torchvision
 from torchvision import transforms
+from torchvision import models
 
 import numpy as np
 from PIL import Image
@@ -57,9 +58,10 @@ num_classes = 2
 num_channels = 3
 random_seed = 207
 
-demo_img_path = 'xray_test.jpg'
+demo_img_path = 'auto.jpg'
 img_size = (224,224)
 img_label = 1
+greyscale=False
 
 set_config = dict(signed=args.signed,
               boxed=args.boxed,
@@ -69,7 +71,7 @@ set_config = dict(signed=args.signed,
               lr=0.1,
               optim=args.optimizer,
               restarts=args.restarts,
-              max_iterations=20_000,
+              max_iterations=5000,
               total_variation=args.tv,
               init='randn',
               filter='none',
@@ -107,6 +109,8 @@ if __name__ == "__main__":
     elif args.model == 'ResNet18':
         model = torchvision.models.resnet18(pretrained=args.trained_model)
         model_seed = None
+    elif args.model == 'DenseNet121':
+        model = models.densenet121(pretrained = args.trained_model)
     else: # substitute this by other model that I want to use
         model, model_seed = inversefed.construct_model(args.model, num_classes=num_classes, num_channels=num_channels)
         print('Model seed: ', model_seed)
@@ -144,6 +148,7 @@ if __name__ == "__main__":
         ground_truth_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
         plt.imshow(tp(ground_truth_denormalized[0].cpu()))
         plt.show()
+        # print(ground_truth_denormalized)
 
     else: # adapt this for multiple images without a predefined dataset
         ground_truth, labels = [], []
@@ -228,7 +233,7 @@ if __name__ == "__main__":
     #                       scoring_choice=args.scoring_choice)
     #
         rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images)
-        output, stats = rec_machine.reconstruct(input_gradient, labels, img_shape=img_shape, dryrun=args.dryrun)
+        output, stats = rec_machine.reconstruct(input_gradient, labels, greyscale=greyscale, img_shape=img_shape, dryrun=args.dryrun)
 
 
     else:
@@ -278,14 +283,23 @@ if __name__ == "__main__":
     #
     #
 
+    # if greyscale:
+        # output = output.sub(dm).div(ds)
     # Compute stats
-    test_mse = (output - ground_truth).pow(2).mean().item()
-    feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
-    test_psnr = inversefed.metrics.psnr(output, ground_truth, factor=1 / ds)
+    if greyscale:
+        ground_truth = ground_truth_denormalized
+        factor = 1
+    else:
+        factor=1/ds
+
+    test_mse = (output.detach() - ground_truth).pow(2).mean().item()
+    # feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
+    feat_mse = np.nan
+    # test_psnr = inversefed.metrics.psnr(output, ground_truth, factor=1 / ds)
+    test_psnr = inversefed.metrics.psnr(output.detach(), ground_truth, factor=factor)
 
 
-
-    # Save the resulting image
+    # Save the best image
     if args.save_image and not args.dryrun:
         os.makedirs(args.image_path, exist_ok=True)
         output_denormalized = torch.clamp(output * ds + dm, 0, 1)
@@ -294,7 +308,10 @@ if __name__ == "__main__":
         rec_filename = f'{args.name}_rec_img_idx{stats["best_exp"]}.png'
         torchvision.utils.save_image(output_denormalized, os.path.join(args.image_path, rec_filename))
 
-        gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
+        if not greyscale:
+            gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
+        else:
+            gt_denormalized = ground_truth
         # gt_filename = (f'{validloader.dataset.classes[labels][0]}_ground_truth-{args.target_id}.png')
         gt_filename = f'{args.name}_gt_img.png'
         torchvision.utils.save_image(gt_denormalized, os.path.join(args.image_path, gt_filename))
@@ -304,9 +321,8 @@ if __name__ == "__main__":
 
     # save stats
     for trial in rec_machine.exp_stats:
-        print(trial['history'])
         mses = [((rec_img - ground_truth).pow(2).mean().item()) for rec_img in trial['history']]
-        psnrs = [(inversefed.metrics.psnr(rec_img, ground_truth, factor=1 / ds)) for rec_img in trial['history']]
+        psnrs = [(inversefed.metrics.psnr(rec_img, ground_truth, factor=factor)) for rec_img in trial['history']]
         all_metrics = [trial['idx'], trial['rec_loss'], mses, psnrs]
         with open(f'trial_histories/{args.name}_{trial["name"]}.csv', 'w') as f:
             header = ['iteration', 'loss', 'mse', 'psnr']
@@ -316,7 +332,8 @@ if __name__ == "__main__":
 
 
     # save parameters
-    print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} | FMSE: {feat_mse:2.4e} |")
+    # print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} | FMSE: {feat_mse:2.4e} |")
+    print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} |")
 
     inversefed.utils.save_to_table(args.table_path, name=f'exp_{args.name}', dryrun=args.dryrun,
 

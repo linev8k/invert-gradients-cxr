@@ -1,3 +1,4 @@
+mandalorian/
 
 *.pth # ignore models
 *.csv # ignore tables
