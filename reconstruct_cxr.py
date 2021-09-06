@@ -65,6 +65,10 @@ demo_img_path = 'xray_test.jpg'
 img_size = (224,224)
 img_label = 1
 
+restarts = 1
+max_iterations = 100
+init = 'custom'
+
 # CheXpert mean and std (ungefähr)
 xray_mean = 0.5
 xray_std = 0.3
@@ -77,10 +81,10 @@ set_config = dict(signed=args.signed, # True
               weights='equal',
               lr=0.1,
               optim=args.optimizer, # ours
-              restarts=1,
-              max_iterations=10,
+              restarts=restarts,
+              max_iterations=max_iterations,
               total_variation=args.tv,
-              init='custom',
+              init=init,
               filter='none',
               lr_decay=True,
               scoring_choice='loss')

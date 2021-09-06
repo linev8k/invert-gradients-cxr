@@ -158,6 +158,8 @@ class GradientReconstructor():
 
             if self.config['optim'] == 'adam':
                 optimizer = torch.optim.Adam([x_trial, labels], lr=self.config['lr'])
+            elif self.config['optim'] == 'adamw':
+                optimizer = torch.optim.AdamW([x_trial, labels], lr=self.config['lr'])
             elif self.config['optim'] == 'sgd':  # actually gd
                 optimizer = torch.optim.SGD([x_trial, labels], lr=0.01, momentum=0.9, nesterov=True)
             elif self.config['optim'] == 'LBFGS':
@@ -167,6 +169,8 @@ class GradientReconstructor():
         else:
             if self.config['optim'] == 'adam':
                 optimizer = torch.optim.Adam([x_trial], lr=self.config['lr'])
+            elif self.config['optim'] == 'adamw':
+                optimizer = torch.optim.AdamW([x_trial], lr=self.config['lr'])
             elif self.config['optim'] == 'sgd':  # actually gd
                 optimizer = torch.optim.SGD([x_trial], lr=0.01, momentum=0.9, nesterov=True)
             elif self.config['optim'] == 'LBFGS':
