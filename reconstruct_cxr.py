@@ -37,7 +37,10 @@ import matplotlib.pyplot as plt
 import csv
 
 import inversefed
-from inversefed.data.loss import Classification
+from inversefed.data.loss import Classification, BCE_Classification
+
+# load modified models
+import custom_models
 
 from collections import defaultdict
 import datetime
@@ -55,7 +58,8 @@ defs = inversefed.training_strategy('conservative')
 defs.epochs = args.epochs
 
 # more parameters
-num_classes = 2
+num_classes = 1
+label_encoding = 'multi' # 'one-hot' or 'multi'
 num_channels = 3
 change_inchannel = True # change channels of given model from 3 to 1 (greyscale)
 
@@ -64,14 +68,21 @@ random_seed = 207
 demo_img_path = 'xray_test.jpg'
 img_size = (224,224)
 img_label = 1
+loss_name = 'CE'
 
-restarts = 1
-max_iterations = 100
+# only one label for now
+if label_encoding == 'multi':
+    img_label = torch.Tensor([img_label]).float()
+    img_label = img_label.view(1,1,)
+    loss_name = 'BCE'
+
+restarts = 3
+max_iterations = 20000
 init = 'custom'
 
-# CheXpert mean and std (ungefähr)
-xray_mean = 0.5
-xray_std = 0.3
+# CheXpert mean and std
+xray_mean = 0.5029
+xray_std = 0.2899
 
 # partly overwrites bash arguments
 set_config = dict(signed=args.signed, # True
@@ -101,16 +112,19 @@ if __name__ == "__main__":
     setup = inversefed.utils.system_startup(args)
     start_time = time.time()
 
-    loss_fn = Classification() # this is cross entropy, see https://github.com/JonasGeiping/invertinggradients/blob/master/inversefed/data/loss.py
-
-    # mean, std if a pretrained model with unmodified input is used
-    dm = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_mean'), **setup)[:, None, None]
-    ds = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_std'), **setup)[:, None, None]
+    if label_encoding == 'one-hot':
+        loss_fn = Classification() # this is cross entropy, see https://github.com/JonasGeiping/invertinggradients/blob/master/inversefed/data/loss.py
+    elif label_encoding == 'multi':
+        loss_fn = BCE_Classification()
 
     # mean, std if input channels are modified (greyscale)
     if change_inchannel:
         dm = xray_mean
         ds = xray_std
+    else:
+    # mean, std if a pretrained model with unmodified input is used
+        dm = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_mean'), **setup)[:, None, None]
+        ds = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_std'), **setup)[:, None, None]
 
     tt = transforms.Compose([transforms.Resize(img_size), transforms.ToTensor()])
     tp = transforms.Compose([transforms.ToPILImage()])
@@ -120,8 +134,12 @@ if __name__ == "__main__":
         model = torchvision.models.resnet152(pretrained=args.trained_model)
         model_seed = None
     elif args.model == 'ResNet18':
-        model = torchvision.models.resnet18(pretrained=args.trained_model)
         model_seed = None
+        if label_encoding == 'multi':
+            model = custom_models.ResNet18(out_size=num_classes, pre_trained=args.trained_model)
+        else:
+            model = torchvision.models.resnet18(pretrained=args.trained_model)
+
     elif args.model == 'DenseNet121':
         model = models.densenet121(pretrained = args.trained_model)
         model_seed = None
@@ -131,13 +149,18 @@ if __name__ == "__main__":
     # change number of input channels from 3 (RGB) to 1 (grey), tested for ResNet18
     # https://discuss.pytorch.org/t/how-to-transfer-the-pretrained-weights-for-a-standard-resnet50-to-a-4-channel/52252
     # https://stackoverflow.com/questions/51995977/how-can-i-use-a-pre-trained-neural-network-with-grayscale-images
-    # print(model)
     if change_inchannel:
-        conv1_weight = model.conv1.weight.clone()
-        model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-        with torch.no_grad():
-            model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
-        # print(model)
+        if type(model).__name__ == 'ResNet18':
+            conv1_weight = model.resnet18.conv1.weight.clone()
+            model.resnet18.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+            with torch.no_grad():
+                model.resnet18.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
+        else:
+            conv1_weight = model.conv1.weight.clone()
+            model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+            with torch.no_grad():
+                model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
+        print(model)
 
     model.to(**setup)
     model.eval()
@@ -169,10 +192,16 @@ if __name__ == "__main__":
             print(ground_truth)
             print(ground_truth.shape)
 
-            if not args.label_flip:
+            # if not args.label_flip:
+            #     labels = torch.as_tensor((img_label,), device=setup['device'])
+            #     print(labels)
+            # else: # this won't matter here
+            #     labels = torch.as_tensor((5,), device=setup['device'])
+            if label_encoding == 'multi':
+                labels = img_label.to(setup['device'])
+            else:
                 labels = torch.as_tensor((img_label,), device=setup['device'])
-            else: # this won't matter here
-                labels = torch.as_tensor((5,), device=setup['device'])
+            print(labels)
             target_id = -1
 
         else: # when using a predefined dataset, not relevant here
@@ -248,7 +277,7 @@ if __name__ == "__main__":
             exit("Modify the configurations if you want to change the optimization options")
 
         # reconstruction process
-        rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images)
+        rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
         output, stats = rec_machine.reconstruct(input_gradient, labels, img_shape=img_shape, dryrun=args.dryrun)
 
 

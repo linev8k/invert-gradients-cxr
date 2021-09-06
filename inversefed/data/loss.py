@@ -112,3 +112,21 @@ class Classification(Loss):
         else:
             value = (x.data.argmax(dim=1) == y).sum().float() / y.shape[0]
             return value.detach(), name, format
+
+class BCE_Classification(Loss):
+    """Binary cross entropy with sigmoid activation.
+    """
+
+    def __init__(self):
+        """Init with torch MSE."""
+        self.loss_fn = torch.nn.BCELoss()
+
+    def __call__(self, x=None, y=None):
+        """Return l(x, y)."""
+        name = 'BinaryCrossEntropy'
+        format = '1.5f'
+        if x is None:
+            return name, format
+        else:
+            value = self.loss_fn(x, y)
+            return value, name, format
