@@ -1,7 +1,5 @@
 """Mechanisms for image reconstruction from parameter gradients."""
 
-# reconstruct label not ready for greyscale recovery
-# FedAvg not adapted
 
 import torch
 import torchvision
@@ -56,7 +54,9 @@ class GradientReconstructor():
         self.model = model
         self.setup = dict(device=next(model.parameters()).device, dtype=next(model.parameters()).dtype)
 
-        self.mean_std = torch.tensor(mean_std)
+        if not torch.is_tensor(mean_std[0]):
+            mean_std = torch.tensor(mean_std)
+        self.mean_std = mean_std
         self.num_images = num_images
 
         if self.config['scoring_choice'] == 'inception':
@@ -64,26 +64,23 @@ class GradientReconstructor():
 
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
         self.iDLG = True
+        self.in_channels = 3
 
         self.exp_stats = []
-        self.greyscale = False #this is not working. don't set greyscale to true
-        self.read_grey=False
 
-    def reconstruct(self, input_data, labels, img_shape=(3, 32, 32), read_grey=False, greyscale=False, dryrun=False, eval=True, tol=None):
+    def reconstruct(self, input_data, labels, img_shape=(3, 32, 32), dryrun=False, eval=True, tol=None):
         """Reconstruct image from gradient."""
         start_time = time.time()
         if eval:
             self.model.eval()
 
-
+        self.in_channels = img_shape[0]
         stats = defaultdict(list)
-        self.greyscale = greyscale
-        self.read_grey=read_grey
         x = self._init_images(img_shape)
 
         #show first initial image
-        if self.greyscale:
-            plt.imshow(torchvision.transforms.ToPILImage()(torch.cat((x,x,x), 2)[0][0]))
+        if self.in_channels == 1:
+            plt.imshow(torchvision.transforms.ToPILImage()(x[0][0]), cmap='gray')
             plt.show()
         else:
             plt.imshow(torchvision.transforms.ToPILImage()(x[0][0]))
@@ -138,38 +135,25 @@ class GradientReconstructor():
             x_optimal = x[optimal_index]
 
         print(f'Total time: {time.time()-start_time}.')
-        if self.greyscale:
-            x_optimal = torch.cat((x_optimal, x_optimal, x_optimal), 1)
         return x_optimal.detach(), stats
 
     def _init_images(self, img_shape):
 
-        if self.greyscale: # only initialize one channel
-            if self.config['init'] == 'randn':
-                return torch.randn((self.config['restarts'], self.num_images, 1,img_shape[1], img_shape[2]), **self.setup)
-            elif self.config['init'] == 'rand':
-                return torch.rand((self.config['restarts'], self.num_images, 1,img_shape[1], img_shape[2]), **self.setup)
-            elif self.config['init'] == 'zeros':
-                return torch.zeros((self.config['restarts'], self.num_images, 1,img_shape[1], img_shape[2]), **self.setup)
-            else:
-                raise ValueError()
-
+        if self.config['init'] == 'randn':
+            return torch.randn((self.config['restarts'], self.num_images, *img_shape), **self.setup)
+        elif self.config['init'] == 'rand':
+            return (torch.rand((self.config['restarts'], self.num_images, *img_shape), **self.setup) - 0.5) * 2
+        elif self.config['init'] == 'zeros':
+            return torch.zeros((self.config['restarts'], self.num_images, *img_shape), **self.setup)
+        elif self.config['init'] == 'custom': #initialize with random normal, custom mean and std
+            return torch.randn((self.config['restarts'], self.num_images, *img_shape), **self.setup)  * self.mean_std[1]-self.mean_std[0]
         else:
-            if self.config['init'] == 'randn':
-                return torch.randn((self.config['restarts'], self.num_images, *img_shape), **self.setup)
-            elif self.config['init'] == 'rand':
-                return (torch.rand((self.config['restarts'], self.num_images, *img_shape), **self.setup) - 0.5) * 2
-            elif self.config['init'] == 'zeros':
-                return torch.zeros((self.config['restarts'], self.num_images, *img_shape), **self.setup)
-            elif self.config['init'] == 'custom':
-                return torch.randn((self.config['restarts'], self.num_images, *img_shape), **self.setup)  * self.mean_std[1]-self.mean_std[0]
-            else:
-                raise ValueError()
+            raise ValueError()
 
     def _run_trial(self, trial, x_trial, input_data, labels, dryrun=False):
         x_trial.requires_grad = True
         if self.reconstruct_label:
-            output_test = self.model(x_trial) # adapt this to greyscale if needed
+            output_test = self.model(x_trial)
             labels = torch.randn(output_test.shape[1]).to(**self.setup).requires_grad_(True)
 
             if self.config['optim'] == 'adam':
@@ -210,10 +194,7 @@ class GradientReconstructor():
 
                 if iteration % save_every == 0:
                     trial_stats['rec_loss'].append(rec_loss.item())
-                    if self.greyscale:
-                        trial_stats['history'].append(torch.cat((x_trial, x_trial, x_trial),1).detach())
-                    else:
-                        trial_stats['history'].append(x_trial.detach())
+                    trial_stats['history'].append(x_trial.detach())
                     trial_stats['idx'].append(iteration)
                     self._save_trial_img(trial_stats)
 
@@ -222,11 +203,8 @@ class GradientReconstructor():
 
                 with torch.no_grad():
                     # Project into image space
-                    if self.config['boxed']: #CHANGE THIS BACK
-                        if self.greyscale:
-                            x_trial.data = torch.max(torch.min(x_trial, (1 - dm[0]) / ds[0]), -dm[0] / ds[0])
-                        else:
-                            x_trial.data = torch.max(torch.min(x_trial, (1 - dm) / ds), -dm / ds) 
+                    if self.config['boxed']:
+                        x_trial.data = torch.max(torch.min(x_trial, (1 - dm) / ds), -dm / ds)
 
                     if (iteration + 1 == max_iterations) or iteration % 500 == 0:
                         print(f'It: {iteration}. Rec. loss: {rec_loss.item():2.4f}.')
@@ -258,14 +236,7 @@ class GradientReconstructor():
         def closure():
             optimizer.zero_grad()
             self.model.zero_grad()
-            if self.greyscale:
-                norm_x_trial = torch.cat((x_trial, x_trial, x_trial), 1).sub(dm).div(ds) # normalize before feeding to model
-                loss = self.loss_fn(self.model(norm_x_trial), label)
-            if self.read_grey:
-                loss = self.loss_fn(self.model(torch.cat((x_trial,x_trial,x_trial),1)), label)
-
-            else:
-                loss = self.loss_fn(self.model(x_trial), label)
+            loss = self.loss_fn(self.model(x_trial), label)
             gradient = torch.autograd.grad(loss, self.model.parameters(), create_graph=True)
             rec_loss = reconstruction_costs([gradient], input_gradient,
                                             cost_fn=self.config['cost_fn'], indices=self.config['indices'],
@@ -286,16 +257,7 @@ class GradientReconstructor():
         if self.config['scoring_choice'] == 'loss':
             self.model.zero_grad()
             x_trial.grad = None
-
-            if self.greyscale:
-                x_trial = torch.cat((x_trial, x_trial, x_trial), 1)
-                norm_x_trial = x_trial.sub(dm).div(ds)
-                loss = self.loss_fn(self.model(norm_x_trial), label)
-            if self.read_grey:
-                loss = self.loss_fn(self.model(torch.cat((x_trial,x_trial,x_trial),1)), label)
-            else:
-                loss = self.loss_fn(self.model(x_trial), label)
-
+            loss = self.loss_fn(self.model(x_trial), label)
             gradient = torch.autograd.grad(loss, self.model.parameters(), create_graph=False)
             return reconstruction_costs([gradient], input_gradient,
                                         cost_fn=self.config['cost_fn'], indices=self.config['indices'],
@@ -339,12 +301,12 @@ class GradientReconstructor():
             plt.figure(figsize=(12, 8))
             plt.axis('off')
             for i in range(len(trial_history)): # iterate through image history
-                if not self.greyscale and not self.read_grey: # ???
-                    pil_img = torchvision.transforms.ToPILImage()(torch.clamp(trial_history[i][img_idx] * ds + dm, 0, 1)) # denormalize image
-                else:
-                    pil_img = torchvision.transforms.ToPILImage()(trial_history[i][img_idx])
+                pil_img = torchvision.transforms.ToPILImage()(torch.clamp(trial_history[i][img_idx] * ds + dm, 0, 1)) # denormalize image
                 plt.subplot(plot_rows, plot_cols, i+1)
-                plt.imshow(pil_img, cmap='gray')
+                if self.in_channels == 1:
+                    plt.imshow(pil_img, cmap='gray')
+                else:
+                    plt.imshow(pil_img)
                 plt.title(trial_stats['idx'][i])
                 plt.axis('off')
             plt.savefig(f"trial_histories/{trial_stats['name']}_history.png")

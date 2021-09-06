@@ -57,36 +57,35 @@ defs.epochs = args.epochs
 # more parameters
 num_classes = 2
 num_channels = 3
+change_inchannel = True # change channels of given model from 3 to 1 (greyscale)
+
 random_seed = 207
 
 demo_img_path = 'xray_test.jpg'
 img_size = (224,224)
 img_label = 1
-greyscale=False #leave this!
-read_grey = False #leavt his!
+
+# CheXpert mean and std (ungefähr)
 xray_mean = 0.5
 xray_std = 0.3
 
-
-change_inchannel = True # change channels of given model from 3 to 1 (greyscale)
-
-
-set_config = dict(signed=args.signed,
-              boxed=args.boxed,
-              cost_fn=args.cost_fn,
+# partly overwrites bash arguments
+set_config = dict(signed=args.signed, # True
+              boxed=args.boxed, # True
+              cost_fn=args.cost_fn, # cosine sim.
               indices='def',
               weights='equal',
               lr=0.1,
-              optim=args.optimizer,
-              restarts=args.restarts,
-              max_iterations=100,
+              optim=args.optimizer, # ours
+              restarts=1,
+              max_iterations=10,
               total_variation=args.tv,
               init='custom',
               filter='none',
               lr_decay=True,
               scoring_choice='loss')
 
-# not reproducible...
+# not entirely reproducible... only on GPU
 if args.deterministic:
     inversefed.utils.set_deterministic()
     inversefed.utils.set_random_seed(random_seed)
@@ -100,9 +99,11 @@ if __name__ == "__main__":
 
     loss_fn = Classification() # this is cross entropy, see https://github.com/JonasGeiping/invertinggradients/blob/master/inversefed/data/loss.py
 
+    # mean, std if a pretrained model with unmodified input is used
     dm = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_mean'), **setup)[:, None, None]
     ds = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_std'), **setup)[:, None, None]
 
+    # mean, std if input channels are modified (greyscale)
     if change_inchannel:
         dm = xray_mean
         ds = xray_std
@@ -110,8 +111,7 @@ if __name__ == "__main__":
     tt = transforms.Compose([transforms.Resize(img_size), transforms.ToTensor()])
     tp = transforms.Compose([transforms.ToPILImage()])
 
-
-    # if args.dataset == 'ImageNet':
+    # currently supported models
     if args.model == 'ResNet152':
         model = torchvision.models.resnet152(pretrained=args.trained_model)
         model_seed = None
@@ -121,39 +121,40 @@ if __name__ == "__main__":
     elif args.model == 'DenseNet121':
         model = models.densenet121(pretrained = args.trained_model)
         model_seed = None
-    else: # substitute this by other model that I want to use
-        model, model_seed = inversefed.construct_model(args.model, num_classes=num_classes, num_channels=num_channels)
-        print('Model seed: ', model_seed)
+    else:
+        exit('Model not supported')
 
+    # change number of input channels from 3 (RGB) to 1 (grey), tested for ResNet18
+    # https://discuss.pytorch.org/t/how-to-transfer-the-pretrained-weights-for-a-standard-resnet50-to-a-4-channel/52252
+    # https://stackoverflow.com/questions/51995977/how-can-i-use-a-pre-trained-neural-network-with-grayscale-images
     # print(model)
-    if change_inchannel: # for ResNet18!
-        # https://discuss.pytorch.org/t/how-to-transfer-the-pretrained-weights-for-a-standard-resnet50-to-a-4-channel/52252
-        # https://stackoverflow.com/questions/51995977/how-can-i-use-a-pre-trained-neural-network-with-grayscale-images
+    if change_inchannel:
         conv1_weight = model.conv1.weight.clone()
         model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         with torch.no_grad():
-            model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True))
+            model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
         # print(model)
-
 
     model.to(**setup)
     model.eval()
 
     # Choose example images from the validation set or from third-party sources
     if args.num_images == 1:
-        if args.target_id == -1:  # demo image
+        if args.target_id == -1:  # demo, custom image
 
-            if read_grey or change_inchannel:
+            if change_inchannel:
+
                 ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).resize(img_size))/255, **setup)
                 print(ground_truth)
                 ground_truth = ground_truth.view(1,1,*ground_truth.size())
-                ground_truth = ground_truth.sub(xray_mean).div(xray_std)
+                ground_truth = ground_truth.sub(xray_mean).div(xray_std) # normalize
+
                 plt.imshow(tp(torch.cat((ground_truth,ground_truth,ground_truth),1)[0].cpu()))
                 plt.show()
 
                 img_shape = (1, ground_truth.shape[2], ground_truth.shape[3])
 
-            else:
+            else: # original RGB image
                 # Specify PIL filter for lower pillow versions
                 ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).convert('RGB').resize(img_size, Image.BICUBIC)) / 255, **setup)
                 # print(ground_truth)
@@ -166,7 +167,7 @@ if __name__ == "__main__":
 
             if not args.label_flip:
                 labels = torch.as_tensor((img_label,), device=setup['device'])
-            else:
+            else: # this won't matter here
                 labels = torch.as_tensor((5,), device=setup['device'])
             target_id = -1
 
@@ -187,7 +188,8 @@ if __name__ == "__main__":
         # plt.show()
         # print(ground_truth_denormalized)
 
-    else: # adapt this for multiple images without a predefined dataset
+    # adapt this for multiple images without a predefined dataset
+    else:
         ground_truth, labels = [], []
         if args.target_id is None:
             target_id = np.random.randint(len(validloader.dataset))
@@ -208,17 +210,14 @@ if __name__ == "__main__":
         img_shape = (3, ground_truth.shape[2], ground_truth.shape[3])
 
     # Run reconstruction
-    if args.accumulation == 0: # one epoch
+    if args.accumulation == 0: # one epoch, no fed averaging
 
         model.zero_grad()
-        if read_grey:
-            target_loss, _, _ = loss_fn(model(torch.cat((ground_truth,ground_truth,ground_truth),1)), labels)
-        else:
-            target_loss, _, _ = loss_fn(model(ground_truth), labels)
-
+        target_loss, _, _ = loss_fn(model(ground_truth), labels)
         input_gradient = torch.autograd.grad(target_loss, model.parameters())
         input_gradient = [grad.detach() for grad in input_gradient]
 
+        #--------- not of interest here
         # full_norm = torch.stack([g.norm() for g in input_gradient]).mean()
         # print(f'Full gradient norm is {full_norm:e}.')
 
@@ -232,54 +231,26 @@ if __name__ == "__main__":
                 raise ValueError(f'Unknown data type argument {args.dtype}.')
             print(f'Model and input parameter moved to {args.dtype}-precision.')
 
-            # why change this here? use xray mean std?
-            # dm = torch.as_tensor(inversefed.consts.cifar10_mean, **setup)[:, None, None]
-            # ds = torch.as_tensor(inversefed.consts.cifar10_std, **setup)[:, None, None]
             ground_truth = ground_truth.to(**setup)
             input_gradient = [g.to(**setup) for g in input_gradient]
             model.to(**setup)
             model.eval()
+        #----------
 
         if args.optim == 'ours':
-            # config = dict(signed=args.signed,
-            #               boxed=args.boxed,
-            #               cost_fn=args.cost_fn,
-            #               indices='def',
-            #               weights='equal',
-            #               lr=0.1,
-            #               optim=args.optimizer,
-            #               restarts=args.restarts,
-            #               max_iterations=1000,
-            #               total_variation=args.tv,
-            #               init='randn',
-            #               filter='none',
-            #               lr_decay=True,
-            #               scoring_choice='loss')
             config = set_config
 
-    #     elif args.optim == 'zhu':
-    #         config = dict(signed=False,
-    #                       boxed=False,
-    #                       cost_fn='l2',
-    #                       indices='def',
-    #                       weights='equal',
-    #                       lr=1e-4,
-    #                       optim='LBFGS',
-    #                       restarts=args.restarts,
-    #                       max_iterations=300,
-    #                       total_variation=args.tv,
-    #                       init=args.init,
-    #                       filter='none',
-    #                       lr_decay=False,
-    #                       scoring_choice=args.scoring_choice)
-    #
+        else:
+            exit("Modify the configurations if you want to change the optimization options")
+
+        # reconstruction process
         rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images)
-        output, stats = rec_machine.reconstruct(input_gradient, labels, read_grey=read_grey, greyscale=greyscale, img_shape=img_shape, dryrun=args.dryrun)
+        output, stats = rec_machine.reconstruct(input_gradient, labels, img_shape=img_shape, dryrun=args.dryrun)
 
 
     else:
         pass
-        # investigate how this works
+        # fed averaging not of interest here
 
     #     local_gradient_steps = args.accumulation
     #     local_lr = 1e-4
@@ -324,36 +295,23 @@ if __name__ == "__main__":
     #
     #
 
-    # if greyscale:
-        # output = output.sub(dm).div(ds)
+
     # Compute stats
-    if greyscale:
-        ground_truth = ground_truth_denormalized
-        factor = 1
-    else:
-        factor=1/ds
+    factor=1/ds # for psnr
 
     test_mse = (output.detach() - ground_truth).pow(2).mean().item()
     # feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
-    feat_mse = np.nan
-    # test_psnr = inversefed.metrics.psnr(output, ground_truth, factor=1 / ds)
+    feat_mse = np.nan # placeholder so no errors occur
     test_psnr = inversefed.metrics.psnr(output.detach(), ground_truth, factor=factor)
-
 
     # Save the best image
     if args.save_image and not args.dryrun:
         os.makedirs(args.image_path, exist_ok=True)
         output_denormalized = torch.clamp(output * ds + dm, 0, 1)
-        # rec_filename = (f'{validloader.dataset.classes[labels][0]}_{"trained" if args.trained_model else ""}'
-                        # f'{args.model}_{args.cost_fn}-{args.target_id}.png')
         rec_filename = f'{args.name}_rec_img_idx{stats["best_exp"]}.png'
         torchvision.utils.save_image(output_denormalized, os.path.join(args.image_path, rec_filename))
 
-        if not greyscale:
-            gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
-        else:
-            gt_denormalized = ground_truth
-        # gt_filename = (f'{validloader.dataset.classes[labels][0]}_ground_truth-{args.target_id}.png')
+        gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
         gt_filename = f'{args.name}_gt_img.png'
         torchvision.utils.save_image(gt_denormalized, os.path.join(args.image_path, gt_filename))
     else:
@@ -371,24 +329,22 @@ if __name__ == "__main__":
             writer.writerow(header)
             writer.writerows(zip(*all_metrics))
 
-
-    # save parameters
-    # print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} | FMSE: {feat_mse:2.4e} |")
     print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} |")
 
+    # save parameters
     inversefed.utils.save_to_table(args.table_path, name=f'exp_{args.name}', dryrun=args.dryrun,
 
                                    model=args.model,
                                    dataset=args.dataset,
                                    trained=args.trained_model,
                                    accumulation=args.accumulation,
-                                   restarts=args.restarts,
+                                   restarts=config['restarts'],
                                    OPTIM=args.optim,
                                    cost_fn=args.cost_fn,
                                    indices=args.indices,
                                    weights=args.weights,
                                    scoring=args.scoring_choice,
-                                   init=args.init,
+                                   init=config['init'],
                                    tv=args.tv,
 
                                    rec_loss=stats["opt"],
