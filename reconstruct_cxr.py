@@ -29,6 +29,7 @@ import torch
 import torchvision
 from torchvision import transforms
 from torchvision import models
+import torch.nn as nn
 
 import numpy as np
 from PIL import Image
@@ -58,10 +59,17 @@ num_classes = 2
 num_channels = 3
 random_seed = 207
 
-demo_img_path = 'auto.jpg'
+demo_img_path = 'xray_test.jpg'
 img_size = (224,224)
 img_label = 1
-greyscale=False
+greyscale=False #leave this!
+read_grey = False
+xray_mean = 0.5
+xray_std = 0.3
+
+
+change_inchannel = True # change channels of given model from 3 to 1 (greyscale)
+
 
 set_config = dict(signed=args.signed,
               boxed=args.boxed,
@@ -71,9 +79,9 @@ set_config = dict(signed=args.signed,
               lr=0.1,
               optim=args.optimizer,
               restarts=args.restarts,
-              max_iterations=5000,
+              max_iterations=1000,
               total_variation=args.tv,
-              init='randn',
+              init='custom',
               filter='none',
               lr_decay=True,
               scoring_choice='loss')
@@ -98,6 +106,10 @@ if __name__ == "__main__":
     dm = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_mean'), **setup)[:, None, None]
     ds = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_std'), **setup)[:, None, None]
 
+    if change_inchannel:
+        dm = xray_mean
+        ds = xray_std
+
     tt = transforms.Compose([transforms.Resize(img_size), transforms.ToTensor()])
     tp = transforms.Compose([transforms.ToPILImage()])
 
@@ -111,9 +123,28 @@ if __name__ == "__main__":
         model_seed = None
     elif args.model == 'DenseNet121':
         model = models.densenet121(pretrained = args.trained_model)
+        model_seed = None
     else: # substitute this by other model that I want to use
         model, model_seed = inversefed.construct_model(args.model, num_classes=num_classes, num_channels=num_channels)
         print('Model seed: ', model_seed)
+
+    # print(model)
+    if change_inchannel: # for ResNet18!
+        # https://discuss.pytorch.org/t/how-to-transfer-the-pretrained-weights-for-a-standard-resnet50-to-a-4-channel/52252
+        conv1_weight = model.conv1.weight.clone()
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        with torch.no_grad():
+            model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True))
+        # print(model)
+
+        # https://stackoverflow.com/questions/51995977/how-can-i-use-a-pre-trained-neural-network-with-grayscale-images
+        # cur_state_dict = model.state_dict()
+        # conv1_weight = cur_state_dict['conv1.weight']
+        # cur_state_dict['conv1.weight'] = conv1_weight.sum(dim=1,keepdim=True)
+        # model.load_state_dict(cur_state_dict)
+        # print(model)
+
+
 
     model.to(**setup)
     model.eval()
@@ -122,10 +153,26 @@ if __name__ == "__main__":
     if args.num_images == 1:
         if args.target_id == -1:  # demo image
 
-            # Specify PIL filter for lower pillow versions
-            ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).convert('RGB').resize(img_size, Image.BICUBIC)) / 255, **setup)
-            # print(ground_truth)
-            ground_truth = ground_truth.permute(2, 0, 1).sub(dm).div(ds).unsqueeze(0).contiguous()
+            if read_grey or change_inchannel:
+                ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).resize(img_size))/255, **setup)
+                print(ground_truth)
+                ground_truth = ground_truth.view(1,1,*ground_truth.size())
+                ground_truth = ground_truth.sub(xray_mean).div(xray_std)
+                plt.imshow(tp(torch.cat((ground_truth,ground_truth,ground_truth),1)[0].cpu()))
+                plt.show()
+
+                img_shape = (1, ground_truth.shape[2], ground_truth.shape[3])
+            else:
+                # Specify PIL filter for lower pillow versions
+                ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).convert('RGB').resize(img_size, Image.BICUBIC)) / 255, **setup)
+                # print(ground_truth)
+                ground_truth = ground_truth.permute(2, 0, 1).sub(dm).div(ds).unsqueeze(0).contiguous()
+
+                img_shape = (3, ground_truth.shape[2], ground_truth.shape[3])
+
+            print(ground_truth)
+            print(ground_truth.shape)
+
             if not args.label_flip:
                 labels = torch.as_tensor((img_label,), device=setup['device'])
             else:
@@ -142,12 +189,11 @@ if __name__ == "__main__":
                 labels = torch.randint((10,))
             ground_truth, labels = ground_truth.unsqueeze(0).to(**setup), torch.as_tensor((labels,), device=setup['device'])
 
-        img_shape = (3, ground_truth.shape[2], ground_truth.shape[3])
 
         # plt.imshow(tp(ground_truth[0].cpu()))
-        ground_truth_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
-        plt.imshow(tp(ground_truth_denormalized[0].cpu()))
-        plt.show()
+        # ground_truth_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
+        # plt.imshow(tp(ground_truth_denormalized[0].cpu()))
+        # plt.show()
         # print(ground_truth_denormalized)
 
     else: # adapt this for multiple images without a predefined dataset
@@ -174,7 +220,11 @@ if __name__ == "__main__":
     if args.accumulation == 0: # one epoch
 
         model.zero_grad()
-        target_loss, _, _ = loss_fn(model(ground_truth), labels)
+        if read_grey:
+            target_loss, _, _ = loss_fn(model(torch.cat((ground_truth,ground_truth,ground_truth),1)), labels)
+        else:
+            target_loss, _, _ = loss_fn(model(ground_truth), labels)
+
         input_gradient = torch.autograd.grad(target_loss, model.parameters())
         input_gradient = [grad.detach() for grad in input_gradient]
 
@@ -233,7 +283,7 @@ if __name__ == "__main__":
     #                       scoring_choice=args.scoring_choice)
     #
         rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images)
-        output, stats = rec_machine.reconstruct(input_gradient, labels, greyscale=greyscale, img_shape=img_shape, dryrun=args.dryrun)
+        output, stats = rec_machine.reconstruct(input_gradient, labels, read_grey=read_grey, greyscale=greyscale, img_shape=img_shape, dryrun=args.dryrun)
 
 
     else:

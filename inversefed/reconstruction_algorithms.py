@@ -28,7 +28,7 @@ DEFAULT_CONFIG = dict(signed=False,
                       total_variation=1e-1,
                       init='randn',
                       filter='none',
-                      lr_decay=True,
+                      lr_decay=False,
                       scoring_choice='loss')
 
 def _label_to_onehot(target, num_classes=100):
@@ -56,7 +56,7 @@ class GradientReconstructor():
         self.model = model
         self.setup = dict(device=next(model.parameters()).device, dtype=next(model.parameters()).dtype)
 
-        self.mean_std = mean_std
+        self.mean_std = torch.tensor(mean_std)
         self.num_images = num_images
 
         if self.config['scoring_choice'] == 'inception':
@@ -67,8 +67,9 @@ class GradientReconstructor():
 
         self.exp_stats = []
         self.greyscale = False #this is not working. don't set greyscale to true
+        self.read_grey=False
 
-    def reconstruct(self, input_data, labels, img_shape=(3, 32, 32), greyscale=False, dryrun=False, eval=True, tol=None):
+    def reconstruct(self, input_data, labels, img_shape=(3, 32, 32), read_grey=False, greyscale=False, dryrun=False, eval=True, tol=None):
         """Reconstruct image from gradient."""
         start_time = time.time()
         if eval:
@@ -77,6 +78,7 @@ class GradientReconstructor():
 
         stats = defaultdict(list)
         self.greyscale = greyscale
+        self.read_grey=read_grey
         x = self._init_images(img_shape)
 
         #show first initial image
@@ -159,6 +161,8 @@ class GradientReconstructor():
                 return (torch.rand((self.config['restarts'], self.num_images, *img_shape), **self.setup) - 0.5) * 2
             elif self.config['init'] == 'zeros':
                 return torch.zeros((self.config['restarts'], self.num_images, *img_shape), **self.setup)
+            elif self.config['init'] == 'custom':
+                return torch.randn((self.config['restarts'], self.num_images, *img_shape), **self.setup)  * self.mean_std[1]-self.mean_std[0]
             else:
                 raise ValueError()
 
@@ -218,11 +222,11 @@ class GradientReconstructor():
 
                 with torch.no_grad():
                     # Project into image space
-                    if self.config['boxed']:
+                    if self.config['boxed']: #CHANGE THIS BACK
                         if self.greyscale:
                             x_trial.data = torch.max(torch.min(x_trial, (1 - dm[0]) / ds[0]), -dm[0] / ds[0])
                         else:
-                            x_trial.data = torch.max(torch.min(x_trial, (1 - dm) / ds), -dm / ds)
+                            x_trial.data = torch.max(torch.min(x_trial, (1 - dm) / ds), -dm / ds) #this messes up the greyscale shape
 
                     if (iteration + 1 == max_iterations) or iteration % 500 == 0:
                         print(f'It: {iteration}. Rec. loss: {rec_loss.item():2.4f}.')
@@ -257,6 +261,9 @@ class GradientReconstructor():
             if self.greyscale:
                 norm_x_trial = torch.cat((x_trial, x_trial, x_trial), 1).sub(dm).div(ds) # normalize before feeding to model
                 loss = self.loss_fn(self.model(norm_x_trial), label)
+            if self.read_grey:
+                loss = self.loss_fn(self.model(torch.cat((x_trial,x_trial,x_trial),1)), label)
+
             else:
                 loss = self.loss_fn(self.model(x_trial), label)
             gradient = torch.autograd.grad(loss, self.model.parameters(), create_graph=True)
@@ -279,10 +286,13 @@ class GradientReconstructor():
         if self.config['scoring_choice'] == 'loss':
             self.model.zero_grad()
             x_trial.grad = None
+
             if self.greyscale:
                 x_trial = torch.cat((x_trial, x_trial, x_trial), 1)
                 norm_x_trial = x_trial.sub(dm).div(ds)
                 loss = self.loss_fn(self.model(norm_x_trial), label)
+            if self.read_grey:
+                loss = self.loss_fn(self.model(torch.cat((x_trial,x_trial,x_trial),1)), label)
             else:
                 loss = self.loss_fn(self.model(x_trial), label)
 
@@ -329,12 +339,12 @@ class GradientReconstructor():
             plt.figure(figsize=(12, 8))
             plt.axis('off')
             for i in range(len(trial_history)): # iterate through image history
-                if not self.greyscale:
+                if not self.greyscale and self.read_grey: # ???
                     pil_img = torchvision.transforms.ToPILImage()(torch.clamp(trial_history[i][img_idx] * ds + dm, 0, 1)) # denormalize image
                 else:
                     pil_img = torchvision.transforms.ToPILImage()(trial_history[i][img_idx])
                 plt.subplot(plot_rows, plot_cols, i+1)
-                plt.imshow(pil_img)
+                plt.imshow(pil_img, cmap='gray')
                 plt.title(trial_stats['idx'][i])
                 plt.axis('off')
             plt.savefig(f"trial_histories/{trial_stats['name']}_history.png")
