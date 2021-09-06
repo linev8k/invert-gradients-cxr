@@ -226,7 +226,7 @@ class GradientReconstructor():
                         if self.greyscale:
                             x_trial.data = torch.max(torch.min(x_trial, (1 - dm[0]) / ds[0]), -dm[0] / ds[0])
                         else:
-                            x_trial.data = torch.max(torch.min(x_trial, (1 - dm) / ds), -dm / ds) #this messes up the greyscale shape
+                            x_trial.data = torch.max(torch.min(x_trial, (1 - dm) / ds), -dm / ds) 
 
                     if (iteration + 1 == max_iterations) or iteration % 500 == 0:
                         print(f'It: {iteration}. Rec. loss: {rec_loss.item():2.4f}.')
@@ -339,7 +339,7 @@ class GradientReconstructor():
             plt.figure(figsize=(12, 8))
             plt.axis('off')
             for i in range(len(trial_history)): # iterate through image history
-                if not self.greyscale and self.read_grey: # ???
+                if not self.greyscale and not self.read_grey: # ???
                     pil_img = torchvision.transforms.ToPILImage()(torch.clamp(trial_history[i][img_idx] * ds + dm, 0, 1)) # denormalize image
                 else:
                     pil_img = torchvision.transforms.ToPILImage()(trial_history[i][img_idx])

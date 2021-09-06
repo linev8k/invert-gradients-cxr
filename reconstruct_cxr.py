@@ -63,7 +63,7 @@ demo_img_path = 'xray_test.jpg'
 img_size = (224,224)
 img_label = 1
 greyscale=False #leave this!
-read_grey = False
+read_grey = False #leavt his!
 xray_mean = 0.5
 xray_std = 0.3
 
@@ -79,7 +79,7 @@ set_config = dict(signed=args.signed,
               lr=0.1,
               optim=args.optimizer,
               restarts=args.restarts,
-              max_iterations=1000,
+              max_iterations=100,
               total_variation=args.tv,
               init='custom',
               filter='none',
@@ -97,9 +97,6 @@ if __name__ == "__main__":
     # Choose GPU device and print status information:
     setup = inversefed.utils.system_startup(args)
     start_time = time.time()
-
-    # Get data:
-    # loss_fn, trainloader, validloader = inversefed.construct_dataloaders(args.dataset, defs, data_path=args.data_path)
 
     loss_fn = Classification() # this is cross entropy, see https://github.com/JonasGeiping/invertinggradients/blob/master/inversefed/data/loss.py
 
@@ -131,19 +128,12 @@ if __name__ == "__main__":
     # print(model)
     if change_inchannel: # for ResNet18!
         # https://discuss.pytorch.org/t/how-to-transfer-the-pretrained-weights-for-a-standard-resnet50-to-a-4-channel/52252
+        # https://stackoverflow.com/questions/51995977/how-can-i-use-a-pre-trained-neural-network-with-grayscale-images
         conv1_weight = model.conv1.weight.clone()
         model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         with torch.no_grad():
             model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True))
         # print(model)
-
-        # https://stackoverflow.com/questions/51995977/how-can-i-use-a-pre-trained-neural-network-with-grayscale-images
-        # cur_state_dict = model.state_dict()
-        # conv1_weight = cur_state_dict['conv1.weight']
-        # cur_state_dict['conv1.weight'] = conv1_weight.sum(dim=1,keepdim=True)
-        # model.load_state_dict(cur_state_dict)
-        # print(model)
-
 
 
     model.to(**setup)
@@ -162,6 +152,7 @@ if __name__ == "__main__":
                 plt.show()
 
                 img_shape = (1, ground_truth.shape[2], ground_truth.shape[3])
+
             else:
                 # Specify PIL filter for lower pillow versions
                 ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).convert('RGB').resize(img_size, Image.BICUBIC)) / 255, **setup)
