@@ -320,7 +320,7 @@ class GradientReconstructor():
                     plt.imshow(pil_img)
                 plt.title(trial_stats['idx'][i])
                 plt.axis('off')
-            plt.savefig(f"trial_histories/{trial_stats['name']}_history.png")
+            plt.savefig(f"trial_histories/{trial_stats['name']}_img{img_idx}_history.png")
             plt.close()
 
 

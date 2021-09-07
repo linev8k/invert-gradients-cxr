@@ -61,18 +61,30 @@ defs.epochs = args.epochs
 num_classes = 1
 label_encoding = 'multi' # 'one-hot' or 'multi'
 num_channels = 3
-change_inchannel = False # change channels of given model from 3 to 1 (greyscale)
+change_inchannel = True # change channels of given model from 3 to 1 (greyscale)
 random_seed = 207
 
-demo_img_path = 'xray_test.jpg'
 img_size = (224,224)
-img_label = 1
+if args.num_images == 1:
+    demo_img_path = 'xray_test.jpg'
+    img_label = 1
+else:
+    demo_folder = 'demo_images/'
+    # demo_img_path = [demo_folder+'NORMAL-1455093-0001.jpeg', demo_folder+'VIRUS-6709337-0001.jpeg']
+    # img_label = [1,1]
+
+    demo_img_path =[demo_folder+'NORMAL-1455093-0001.jpeg', demo_folder+'VIRUS-6709337-0001.jpeg',
+                        demo_folder+'BACTERIA-3000214-0003.jpeg', demo_folder+'NORMAL-9427315-0001.jpeg']
+    img_label = [1,1,1,1]
+
+    assert len(demo_img_path) == args.num_images, "Specified number of images must match image names"
+    assert len(img_label) == args.num_images, "Incorrect number of labels provided"
 
 loss_name = 'CE'
 # only one label for now
 if label_encoding == 'multi':
     img_label = torch.Tensor([img_label]).float()
-    img_label = img_label.view(1,1,)
+    img_label = img_label.view(args.num_images,1)
     loss_name = 'BCE'
 
 restarts = 3
@@ -154,17 +166,16 @@ if __name__ == "__main__":
             model.resnet18.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             with torch.no_grad():
                 model.resnet18.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
-        else:
+        elif type(model).__name__ == 'ResNet':
             conv1_weight = model.conv1.weight.clone()
             model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             with torch.no_grad():
                 model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
-        print(model)
 
     model.to(**setup)
     model.eval()
 
-    # Choose example images from the validation set or from third-party sources
+    # read in images, prepare labels
     if args.num_images == 1:
         if args.target_id == -1:  # demo, custom image
 
@@ -191,11 +202,6 @@ if __name__ == "__main__":
             print(ground_truth)
             print(ground_truth.shape)
 
-            # if not args.label_flip:
-            #     labels = torch.as_tensor((img_label,), device=setup['device'])
-            #     print(labels)
-            # else: # this won't matter here
-            #     labels = torch.as_tensor((5,), device=setup['device'])
             if label_encoding == 'multi':
                 labels = img_label.to(setup['device'])
             else:
@@ -203,43 +209,40 @@ if __name__ == "__main__":
             print(labels)
             target_id = -1
 
-        else: # when using a predefined dataset, not relevant here
-            if args.target_id is None:
-                target_id = np.random.randint(len(validloader.dataset))
-            else:
-                target_id = args.target_id
-            ground_truth, labels = validloader.dataset[target_id]
-            if args.label_flip:
-                labels = torch.randint((10,))
-            ground_truth, labels = ground_truth.unsqueeze(0).to(**setup), torch.as_tensor((labels,), device=setup['device'])
+        else:
+            exit("Only custom image supported (target_id -1)")
 
-
-        # plt.imshow(tp(ground_truth[0].cpu()))
-        # ground_truth_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
-        # plt.imshow(tp(ground_truth_denormalized[0].cpu()))
-        # plt.show()
-        # print(ground_truth_denormalized)
 
     # adapt this for multiple images without a predefined dataset
     else:
-        ground_truth, labels = [], []
-        if args.target_id is None:
-            target_id = np.random.randint(len(validloader.dataset))
-        else:
-            target_id = args.target_id
-        while len(labels) < args.num_images:
-            img, label = validloader.dataset[target_id]
-            target_id += 1
-            if label not in labels:
-                labels.append(torch.as_tensor((label,), device=setup['device']))
+
+        if change_inchannel:
+
+            ground_truth = []
+            for img_path in demo_img_path:
+                img = torch.as_tensor(np.array(Image.open(img_path).resize(img_size))/255, **setup)
+                img = img.view(1,*img.size())
+                img = img.sub(xray_mean).div(xray_std) # normalize
                 ground_truth.append(img.to(**setup))
+            ground_truth = torch.stack(ground_truth)
+            img_shape = (1, ground_truth.shape[2], ground_truth.shape[3])
 
-        ground_truth = torch.stack(ground_truth)
-        labels = torch.cat(labels)
-        if args.label_flip:
-            labels = torch.permute(labels)
+        else:
+            ground_truth= []
+            for img_path in demo_img_path:
+                img = torch.as_tensor(np.array(Image.open(img_path).convert('RGB').resize(img_size, Image.BICUBIC)) / 255, **setup)
+                img = img.permute(2, 0, 1).sub(dm).div(ds)
+                ground_truth.append(img.to(**setup))
+            ground_truth = torch.stack(ground_truth)
+            img_shape = (3, ground_truth.shape[2], ground_truth.shape[3])
 
-        img_shape = (3, ground_truth.shape[2], ground_truth.shape[3])
+        plt.imshow(tp(ground_truth[0].cpu()))
+        plt.show()
+        print("GT image shape: ,", ground_truth.shape)
+        labels = torch.as_tensor(img_label, device=setup['device'])
+        print("Label shape :,", labels.shape)
+        print("Labels: ", labels)
+
 
     # Run reconstruction
     if args.accumulation == 0: # one epoch, no fed averaging
@@ -340,21 +343,25 @@ if __name__ == "__main__":
     if args.save_image and not args.dryrun:
         os.makedirs(args.image_path, exist_ok=True)
         output_denormalized = torch.clamp(output * ds + dm, 0, 1)
-        rec_filename = f'{args.name}_rec_img_idx{stats["best_exp"]}.png'
-        torchvision.utils.save_image(output_denormalized, os.path.join(args.image_path, rec_filename))
-
         gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
-        gt_filename = f'{args.name}_gt_img.png'
-        torchvision.utils.save_image(gt_denormalized, os.path.join(args.image_path, gt_filename))
+        for img_idx in range(args.num_images):
+            rec_filename = f'{args.name}_rec_img_exp{stats["best_exp"]}_idx{img_idx}.png'
+            torchvision.utils.save_image(output_denormalized[img_idx], os.path.join(args.image_path, rec_filename))
+            gt_filename = f'{args.name}_gt_img_idx{img_idx}.png'
+            torchvision.utils.save_image(gt_denormalized[img_idx], os.path.join(args.image_path, gt_filename))
     else:
         rec_filename = None
         gt_filename = None
 
     # save stats
     for trial in rec_machine.exp_stats:
-        mses = [((rec_img - ground_truth).pow(2).mean().item()) for rec_img in trial['history']]
-        psnrs = [(inversefed.metrics.psnr(rec_img, ground_truth, factor=factor)) for rec_img in trial['history']]
-        all_metrics = [trial['idx'], trial['rec_loss'], mses, psnrs]
+        all_mses, all_psnrs = [], []
+        for img_hist in trial['history']:
+            mses = [((rec_img - gt_img).pow(2).mean().item()) for rec_img, gt_img in zip(img_hist, ground_truth)]
+            psnrs = [(inversefed.metrics.psnr(rec_img.unsqueeze(0), gt_img.unsqueeze(0), factor=factor)) for rec_img, gt_img in zip(img_hist, ground_truth)]
+            all_mses.append(mses)
+            all_psnrs.append(psnrs)
+        all_metrics = [trial['idx'], trial['rec_loss'], all_mses, all_psnrs]
         with open(f'trial_histories/{args.name}_{trial["name"]}.csv', 'w') as f:
             header = ['iteration', 'loss', 'mse', 'psnr']
             writer = csv.writer(f)
@@ -385,7 +392,7 @@ if __name__ == "__main__":
                                    test_mse=test_mse,
                                    feat_mse=feat_mse,
 
-                                   target_id=target_id,
+                                   target_id=args.target_id,
                                    seed=model_seed,
                                    timing=str(datetime.timedelta(seconds=time.time() - start_time)),
                                    dtype=setup['dtype'],
