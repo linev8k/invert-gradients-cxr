@@ -62,10 +62,11 @@ class GradientReconstructor():
         if self.config['scoring_choice'] == 'inception':
             self.inception = InceptionScore(batch_size=1, setup=self.setup)
 
+        assert loss_fn in ['CE', 'BCE'], "Options for loss function are: CE, BCE"
         if loss_fn == 'BCE':
             self.loss_fn = torch.nn.BCELoss()
         elif loss_fn == 'CE':
-            self.loss_fn == torch.nn.CrossEntropyLoss(reduction='mean')
+            self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
 
         self.iDLG = True
         self.in_channels = 3
@@ -94,10 +95,16 @@ class GradientReconstructor():
 
         if labels is None:
             if self.num_images == 1 and self.iDLG:
-                # iDLG trick:
-                last_weight_min = torch.argmin(torch.sum(input_data[-2], dim=-1), dim=-1)
-                labels = last_weight_min.detach().reshape((1,)).requires_grad_(False)
-                self.reconstruct_label = False
+                if type(self.loss_fn).__name__ == 'CrossEntropyLoss':
+                    # iDLG trick, original for one-hot:
+                    last_weight_min = torch.argmin(torch.sum(input_data[-2], dim=-1), dim=-1)
+                    labels = last_weight_min.detach().reshape((1,)).requires_grad_(False)
+                    self.reconstruct_label = False
+                elif type(self.loss_fn).__name__ == 'BCELoss':
+                    last_weight_rec = torch.where(torch.sign(torch.sum(input_data[-2], dim=-1)) < 0., 1., 0.)
+                    labels = last_weight_rec.detach().reshape((1,1,)).requires_grad_(False)
+                    self.reconstruct_label = False
+                print("Reconstructed label: ",labels)
             else:
                 # DLG label recovery
                 # However this also improves conditioning for some LBFGS cases

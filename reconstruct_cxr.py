@@ -61,15 +61,14 @@ defs.epochs = args.epochs
 num_classes = 1
 label_encoding = 'multi' # 'one-hot' or 'multi'
 num_channels = 3
-change_inchannel = True # change channels of given model from 3 to 1 (greyscale)
-
+change_inchannel = False # change channels of given model from 3 to 1 (greyscale)
 random_seed = 207
 
 demo_img_path = 'xray_test.jpg'
 img_size = (224,224)
 img_label = 1
-loss_name = 'CE'
 
+loss_name = 'CE'
 # only one label for now
 if label_encoding == 'multi':
     img_label = torch.Tensor([img_label]).float()
@@ -91,7 +90,7 @@ set_config = dict(signed=args.signed, # True
               indices='def',
               weights='equal',
               lr=0.1,
-              optim=args.optimizer, # ours
+              optim=args.optimizer, # adam, sgd, adamw, lbfgs
               restarts=restarts,
               max_iterations=max_iterations,
               total_variation=args.tv,
@@ -278,7 +277,7 @@ if __name__ == "__main__":
 
         # reconstruction process
         rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
-        output, stats = rec_machine.reconstruct(input_gradient, labels, img_shape=img_shape, dryrun=args.dryrun)
+        output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun)
 
 
     else:
