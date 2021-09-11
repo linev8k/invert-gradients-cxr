@@ -12,6 +12,9 @@ from .metrics import InceptionScore
 from .medianfilt import MedianPool2d
 from copy import deepcopy
 
+import numpy as np
+from PIL import Image
+
 import time
 
 DEFAULT_CONFIG = dict(signed=False,
@@ -82,6 +85,7 @@ class GradientReconstructor():
         self.in_channels = img_shape[0]
         stats = defaultdict(list)
         x = self._init_images(img_shape)
+
 
         #show first initial image
         if self.in_channels == 1:
@@ -156,8 +160,17 @@ class GradientReconstructor():
             return (torch.rand((self.config['restarts'], self.num_images, *img_shape), **self.setup) - 0.5) * 2
         elif self.config['init'] == 'zeros':
             return torch.zeros((self.config['restarts'], self.num_images, *img_shape), **self.setup)
-        elif self.config['init'] == 'custom': #initialize with random normal, custom mean and std
-            return torch.randn((self.config['restarts'], self.num_images, *img_shape), **self.setup)  * self.mean_std[1]-self.mean_std[0]
+        elif self.config['init'] == 'xray': # initialize with other xray
+            x = torch.as_tensor(np.array(Image.open('xray_init.jpg').resize(img_shape[1:]))/255, **self.setup)
+            x = x.sub(self.mean_std[0]).div(self.mean_std[1])
+            x = x.expand(self.config['restarts'], self.num_images, *img_shape)
+            return x
+        elif self.config['init'] == 'mean_xray': # initialize with mean xray
+            x = torch.as_tensor(np.array(Image.open('mean_xray.jpg').convert('L').resize(img_shape[1:]))/255, **self.setup)
+            print(x.shape)
+            x = x.sub(self.mean_std[0]).div(self.mean_std[1])
+            x = x.expand(self.config['restarts'], self.num_images, *img_shape)
+            return x
         else:
             raise ValueError()
 

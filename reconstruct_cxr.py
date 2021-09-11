@@ -21,7 +21,7 @@ Set as arguments:
 """
 import os
 
-selected_gpus = [0] #configure this
+selected_gpus = [5] #configure this
 os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(gpu) for gpu in selected_gpus])
 
 
@@ -75,7 +75,7 @@ else:
 
     demo_img_path =[demo_folder+'NORMAL-1455093-0001.jpeg', demo_folder+'VIRUS-6709337-0001.jpeg',
                         demo_folder+'BACTERIA-3000214-0003.jpeg', demo_folder+'NORMAL-9427315-0001.jpeg']
-    img_label = [1,1,1,1]
+    img_label = [[0,0],[0,1],[1,0],[1,1]]
 
     assert len(demo_img_path) == args.num_images, "Specified number of images must match image names"
     assert len(img_label) == args.num_images, "Incorrect number of labels provided"
@@ -84,12 +84,12 @@ loss_name = 'CE'
 # only one label for now
 if label_encoding == 'multi':
     img_label = torch.Tensor([img_label]).float()
-    img_label = img_label.view(args.num_images,1)
+    img_label = img_label.view(args.num_images,num_classes)
     loss_name = 'BCE'
 
-restarts = 3
+restarts = 1
 max_iterations = 20000
-init = 'custom'
+init = 'mean_xray' # randn, rand, zeros, xray, mean_xray
 
 # CheXpert mean and std
 xray_mean = 0.5029
@@ -242,7 +242,6 @@ if __name__ == "__main__":
         labels = torch.as_tensor(img_label, device=setup['device'])
         print("Label shape :,", labels.shape)
         print("Labels: ", labels)
-
 
     # Run reconstruction
     if args.accumulation == 0: # one epoch, no fed averaging
