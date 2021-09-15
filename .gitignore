@@ -1,4 +1,15 @@
 mandalorian/
+LICENSE
+README.md
+notebooks/
+rec_mult.py
+reconstruct_image.py
+resnet18_trained.py
+models/
+11794*
+__pycache__/
+environment.yml
+
 
 *.pth # ignore models
 *.csv # ignore tables
