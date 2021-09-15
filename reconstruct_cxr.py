@@ -21,7 +21,7 @@ Set as arguments:
 """
 import os
 
-selected_gpus = [5] #configure this
+selected_gpus = [0] #configure this
 os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(gpu) for gpu in selected_gpus])
 
 
@@ -42,6 +42,7 @@ from inversefed.data.loss import Classification, BCE_Classification
 
 # load modified models
 import custom_models
+from custom_models import weights_init
 
 from collections import defaultdict
 import datetime
@@ -90,8 +91,8 @@ if label_encoding == 'multi':
     img_label = img_label.view(args.num_images,num_classes)
     loss_name = 'BCE'
 
-restarts = 3
-max_iterations = 20000
+restarts = 1
+max_iterations = 30
 init = 'randn' # randn, rand, zeros, xray, mean_xray
 
 # CheXpert mean and std
@@ -156,7 +157,8 @@ if __name__ == "__main__":
             model = torchvision.models.resnet18(pretrained=args.trained_model)
 
     elif args.model == 'DenseNet121':
-        model = models.densenet121(pretrained = args.trained_model)
+        # model = models.densenet121(pretrained = args.trained_model)
+        model = custom_models.DenseNet121(out_size=num_classes, pre_trained=args.trained_model)
         model_seed = None
     else:
         exit('Model not supported')
@@ -170,18 +172,30 @@ if __name__ == "__main__":
             model.resnet18.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             with torch.no_grad():
                 model.resnet18.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
-        elif type(m).__name__ == 'ResNet':
+        elif type(model).__name__ == 'ResNet':
             conv1_weight = model.conv1.weight.clone()
             model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             with torch.no_grad():
                 model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
 
-    if init_model:
-        model.apply(custom_models.weights_init)
+        elif type(model).__name__ == 'DenseNet121':
+            # print(model)
+            # print(model.state_dict().keys())
+            conv0_weight = model.densenet121.features.conv0.weight.clone()
+            model.densenet121.features.conv0 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+            with torch.no_grad():
+                model.densenet121.features.conv0.weight = nn.Parameter(conv0_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
+
+    print(model)
+
     model.to(**setup)
+    if init_model:
+        model.apply(weights_init)
+
     if not from_weights:
         model.eval()
         eval=True
+
 
     # read in images, prepare labels
     if args.num_images == 1:
@@ -279,6 +293,7 @@ if __name__ == "__main__":
         target_loss, _, _ = loss_fn(model(ground_truth), labels)
         input_gradient = torch.autograd.grad(target_loss, model.parameters())
         input_gradient = [grad.detach() for grad in input_gradient]
+        # print(input_gradient)
         # print(input_gradient[41])
 
         #--------- not of interest here

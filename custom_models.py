@@ -76,11 +76,21 @@ class ResNet18(nn.Module):
 def weights_init(m):
     try:
         if hasattr(m, "weight"):
-            m.weight.data.uniform_(-0.5, 0.5)
+            m.weight.data.uniform_(-0.05, 0.05)
     except Exception:
         print('warning: failed in weights_init for %s.weight' % m._get_name())
     try:
         if hasattr(m, "bias"):
-            m.bias.data.uniform_(-0.5, 0.5)
+            m.bias.data.uniform_(-0.05, 0.05)
     except Exception:
         print('warning: failed in weights_init for %s.bias' % m._get_name())
+    # try:
+    #     if hasattr(m, "weight"):
+    #         nn.init.uniform_(m, a=-0.5, b=0.5)
+    # except Exception:
+    #     print('warning: failed in weights_init for %s.weight' % m._get_name())
+    # try:
+    #     if hasattr(m, "bias"):
+    #         nn.init.uniform_(m, a=-0.5, b=0.5)
+    # except Exception:
+    #     print('warning: failed in weights_init for %s.bias' % m._get_name())
