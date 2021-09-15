@@ -161,12 +161,12 @@ class GradientReconstructor():
         elif self.config['init'] == 'zeros':
             return torch.zeros((self.config['restarts'], self.num_images, *img_shape), **self.setup)
         elif self.config['init'] == 'xray': # initialize with other xray
-            x = torch.as_tensor(np.array(Image.open('xray_init.jpg').resize(img_shape[1:]))/255, **self.setup)
+            x = torch.as_tensor(np.array(Image.open('xray_init.jpg').convert('L').resize(img_shape[1:]))/255, **self.setup)
             x = x.sub(self.mean_std[0]).div(self.mean_std[1])
             x = x.expand(self.config['restarts'], self.num_images, *img_shape)
             return x
         elif self.config['init'] == 'mean_xray': # initialize with mean xray
-            x = torch.as_tensor(np.array(Image.open('mean_xray.jpg').convert('L').resize(img_shape[1:]))/255, **self.setup)
+            x = torch.as_tensor(np.array(Image.open('mean_xray.jpg').resize(img_shape[1:]))/255, **self.setup)
             print(x.shape)
             x = x.sub(self.mean_std[0]).div(self.mean_std[1])
             x = x.expand(self.config['restarts'], self.num_images, *img_shape)
@@ -213,8 +213,9 @@ class GradientReconstructor():
         if self.config['lr_decay']:
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                                              milestones=[max_iterations // 2.667, max_iterations // 1.6,
+                                                                     max_iterations // 1.142], gamma=0.1)   # 3/8 5/8 7/8
+            # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=500, threshold=0, factor=0.1, min_lr=0.00001, verbose=True)
 
-                                                                         max_iterations // 1.142], gamma=0.1)   # 3/8 5/8 7/8
         try:
             for iteration in range(max_iterations):
                 closure = self._gradient_closure(optimizer, x_trial, input_data, labels)

@@ -30,6 +30,7 @@ import torchvision
 from torchvision import transforms
 from torchvision import models
 import torch.nn as nn
+from torch import optim
 
 import numpy as np
 from PIL import Image
@@ -45,6 +46,7 @@ import custom_models
 from collections import defaultdict
 import datetime
 import time
+from copy import deepcopy
 
 # torch.backends.cudnn.benchmark = inversefed.consts.BENCHMARK
 # use_cuda = torch.cuda.is_available()
@@ -53,16 +55,17 @@ import time
 # Parse input arguments
 args = inversefed.options().parse_args()
 
-# Parse training strategy (for nn training)
-defs = inversefed.training_strategy('conservative')
-defs.epochs = args.epochs
-
 # more parameters
 num_classes = 1
 label_encoding = 'multi' # 'one-hot' or 'multi'
 num_channels = 3
 change_inchannel = True # change channels of given model from 3 to 1 (greyscale)
+init_model = False #whether to initialize a non-pretrained model with uniform weights
+
 random_seed = 207
+
+from_weights = False # recovering from weights instead of gradients
+model_lr = 0.1
 
 img_size = (224,224)
 if args.num_images == 1:
@@ -87,16 +90,16 @@ if label_encoding == 'multi':
     img_label = img_label.view(args.num_images,num_classes)
     loss_name = 'BCE'
 
-restarts = 1
+restarts = 3
 max_iterations = 20000
-init = 'mean_xray' # randn, rand, zeros, xray, mean_xray
+init = 'randn' # randn, rand, zeros, xray, mean_xray
 
 # CheXpert mean and std
 xray_mean = 0.5029
 xray_std = 0.2899
 
 # partly overwrites bash arguments
-set_config = dict(signed=args.signed, # True
+set_config = dict(signed=False,
               boxed=args.boxed, # True
               cost_fn=args.cost_fn, # cosine sim.
               indices='def',
@@ -144,6 +147,7 @@ if __name__ == "__main__":
     if args.model == 'ResNet152':
         model = torchvision.models.resnet152(pretrained=args.trained_model)
         model_seed = None
+
     elif args.model == 'ResNet18':
         model_seed = None
         if label_encoding == 'multi':
@@ -166,14 +170,18 @@ if __name__ == "__main__":
             model.resnet18.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             with torch.no_grad():
                 model.resnet18.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
-        elif type(model).__name__ == 'ResNet':
+        elif type(m).__name__ == 'ResNet':
             conv1_weight = model.conv1.weight.clone()
             model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             with torch.no_grad():
                 model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
 
+    if init_model:
+        model.apply(custom_models.weights_init)
     model.to(**setup)
-    model.eval()
+    if not from_weights:
+        model.eval()
+        eval=True
 
     # read in images, prepare labels
     if args.num_images == 1:
@@ -244,12 +252,34 @@ if __name__ == "__main__":
         print("Labels: ", labels)
 
     # Run reconstruction
-    if args.accumulation == 0: # one epoch, no fed averaging
+    if from_weights:
+        model.train()
+        eval=False
+        initial_parameters = deepcopy(model.state_dict())
 
+        model_optim = optim.SGD(model.parameters(), lr = model_lr)
         model.zero_grad()
+        target_loss, _, _ = loss_fn(model(ground_truth), labels)
+        target_loss.backward()
+        model_optim.step()
+
+        # approximately compute back gradients (more difficult after several epochs)
+        new_parameters = model.state_dict()
+        with torch.no_grad():
+            input_gradient = []
+            for key in new_parameters:
+                if key.endswith('weight') or key.endswith('bias'):
+                    cur_grad = -(new_parameters[key] - initial_parameters[key])/model_lr
+                    input_gradient.append(cur_grad.detach())
+        # print(input_gradient[41])
+
+    else:
+        model.zero_grad()
+        # model.train()
         target_loss, _, _ = loss_fn(model(ground_truth), labels)
         input_gradient = torch.autograd.grad(target_loss, model.parameters())
         input_gradient = [grad.detach() for grad in input_gradient]
+        # print(input_gradient[41])
 
         #--------- not of interest here
         # full_norm = torch.stack([g.norm() for g in input_gradient]).mean()
@@ -271,63 +301,15 @@ if __name__ == "__main__":
             model.eval()
         #----------
 
-        if args.optim == 'ours':
-            config = set_config
-
-        else:
-            exit("Modify the configurations if you want to change the optimization options")
-
-        # reconstruction process
-        rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
-        output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun)
-
+    if args.optim == 'ours':
+        config = set_config
 
     else:
-        pass
-        # fed averaging not of interest here
+        exit("Modify the configurations if you want to change the optimization options")
 
-    #     local_gradient_steps = args.accumulation
-    #     local_lr = 1e-4
-    #     input_parameters = inversefed.reconstruction_algorithms.loss_steps(model, ground_truth, labels,
-    #                                                                        lr=local_lr, local_steps=local_gradient_steps)
-    #     input_parameters = [p.detach() for p in input_parameters]
-    #
-    #     # Run reconstruction in different precision?
-    #     if args.dtype != 'float':
-    #         if args.dtype in ['double', 'float64']:
-    #             setup['dtype'] = torch.double
-    #         elif args.dtype in ['half', 'float16']:
-    #             setup['dtype'] = torch.half
-    #         else:
-    #             raise ValueError(f'Unknown data type argument {args.dtype}.')
-    #         print(f'Model and input parameter moved to {args.dtype}-precision.')
-    #         ground_truth = ground_truth.to(**setup)
-    #         dm = torch.as_tensor(inversefed.consts.cifar10_mean, **setup)[:, None, None]
-    #         ds = torch.as_tensor(inversefed.consts.cifar10_std, **setup)[:, None, None]
-    #         input_parameters = [g.to(**setup) for g in input_parameters]
-    #         model.to(**setup)
-    #         model.eval()
-    #
-    #     config = dict(signed=args.signed,
-    #                   boxed=args.boxed,
-    #                   cost_fn=args.cost_fn,
-    #                   indices=args.indices,
-    #                   weights=args.weights,
-    #                   lr=1,
-    #                   optim=args.optimizer,
-    #                   restarts=args.restarts,
-    #                   max_iterations=24_000,
-    #                   total_variation=args.tv,
-    #                   init=args.init,
-    #                   filter='none',
-    #                   lr_decay=True,
-    #                   scoring_choice=args.scoring_choice)
-    #
-    #     rec_machine = inversefed.FedAvgReconstructor(model, (dm, ds), local_gradient_steps, local_lr, config,
-    #                                                  num_images=args.num_images, use_updates=True)
-    #     output, stats = rec_machine.reconstruct(input_parameters, labels, img_shape=img_shape, dryrun=args.dryrun)
-    #
-    #
+    # reconstruction process
+    rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
+    output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, eval=eval)
 
 
     # Compute stats
@@ -395,7 +377,7 @@ if __name__ == "__main__":
                                    seed=model_seed,
                                    timing=str(datetime.timedelta(seconds=time.time() - start_time)),
                                    dtype=setup['dtype'],
-                                   epochs=defs.epochs,
+                                   epochs=args.epochs,
                                    val_acc=None,
                                    rec_img=rec_filename,
                                    gt_img=gt_filename
