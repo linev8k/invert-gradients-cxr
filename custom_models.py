@@ -72,6 +72,26 @@ class ResNet18(nn.Module):
         x = self.resnet18(x)
         return x
 
+class ResNet50(nn.Module):
+
+    """Model modified.
+    The architecture of our model is the same as standard ResNet18
+    except the classifier layer which has an additional sigmoid function.
+    """
+
+    def __init__(self, out_size, pre_trained=False):
+        super(ResNet50, self).__init__()
+        self.resnet50 = models.resnet50(pretrained = pre_trained)
+        num_ftrs = self.resnet50.fc.in_features
+        self.resnet50.fc = nn.Sequential(
+            nn.Linear(num_ftrs, out_size),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = self.resnet50(x)
+        return x
+
 
 def weights_init(m):
     try:

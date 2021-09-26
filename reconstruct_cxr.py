@@ -21,7 +21,7 @@ Set as arguments:
 """
 import os
 
-selected_gpus = [0] #configure this
+selected_gpus = [7] #configure this
 os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(gpu) for gpu in selected_gpus])
 
 
@@ -91,8 +91,8 @@ if label_encoding == 'multi':
     img_label = img_label.view(args.num_images,num_classes)
     loss_name = 'BCE'
 
-restarts = 1
-max_iterations = 30
+restarts = 3
+max_iterations = 20000
 init = 'randn' # randn, rand, zeros, xray, mean_xray
 
 # CheXpert mean and std
@@ -100,7 +100,7 @@ xray_mean = 0.5029
 xray_std = 0.2899
 
 # partly overwrites bash arguments
-set_config = dict(signed=False,
+set_config = dict(signed=True,
               boxed=args.boxed, # True
               cost_fn=args.cost_fn, # cosine sim.
               indices='def',
@@ -149,6 +149,13 @@ if __name__ == "__main__":
         model = torchvision.models.resnet152(pretrained=args.trained_model)
         model_seed = None
 
+    elif args.model == 'ResNet50':
+        model_seed = None
+        if label_encoding == 'multi':
+            model = custom_models.ResNet50(out_size=num_classes, pre_trained=args.trained_model)
+        else:
+            model = torchvision.models.resnet50(pretrained=args.trained_model)
+
     elif args.model == 'ResNet18':
         model_seed = None
         if label_encoding == 'multi':
@@ -162,6 +169,9 @@ if __name__ == "__main__":
         model_seed = None
     else:
         exit('Model not supported')
+
+    print(model)
+
 
     # change number of input channels from 3 (RGB) to 1 (grey), tested for ResNet18
     # https://discuss.pytorch.org/t/how-to-transfer-the-pretrained-weights-for-a-standard-resnet50-to-a-4-channel/52252
@@ -177,6 +187,11 @@ if __name__ == "__main__":
             model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             with torch.no_grad():
                 model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
+        elif type(model).__name__ == 'ResNet50':
+            conv1_weight = model.resnet50.conv1.weight.clone()
+            model.resnet50.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+            with torch.no_grad():
+                model.resnet50.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
 
         elif type(model).__name__ == 'DenseNet121':
             # print(model)
@@ -187,7 +202,6 @@ if __name__ == "__main__":
                 model.densenet121.features.conv0.weight = nn.Parameter(conv0_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
 
     print(model)
-
     model.to(**setup)
     if init_model:
         model.apply(weights_init)
