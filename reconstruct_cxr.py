@@ -94,6 +94,7 @@ if label_encoding == 'multi':
 restarts = 3
 max_iterations = 20000
 init = 'randn' # randn, rand, zeros, xray, mean_xray
+tv = 1e-1
 
 # CheXpert mean and std
 xray_mean = 0.5029
@@ -109,7 +110,7 @@ set_config = dict(signed=True,
               optim=args.optimizer, # adam, sgd, adamw, lbfgs
               restarts=restarts,
               max_iterations=max_iterations,
-              total_variation=args.tv,
+              total_variation=tv,
               init=init,
               filter='none',
               lr_decay=True,
@@ -394,7 +395,7 @@ if __name__ == "__main__":
                                    weights=args.weights,
                                    scoring=args.scoring_choice,
                                    init=config['init'],
-                                   tv=args.tv,
+                                   tv=tv,
 
                                    rec_loss=stats["opt"],
                                    best_idx=stats["best_exp"],
