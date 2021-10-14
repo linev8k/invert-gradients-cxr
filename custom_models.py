@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import models
+import torchvision
 
 
 class LeNet(nn.Module):
@@ -38,39 +38,32 @@ class DenseNet121(nn.Module):
     The architecture of our model is the same as standard DenseNet121
     except the classifier layer which has an additional sigmoid function.
     """
-
-    def __init__(self, out_size, pre_trained=False):
+    def __init__(self, out_size, colour_input='RGB', pre_trained=False):
         super(DenseNet121, self).__init__()
-        self.densenet121 = models.densenet121(pretrained = pre_trained)
+        self.densenet121 = torchvision.models.densenet121(pretrained = pre_trained)
         num_ftrs = self.densenet121.classifier.in_features
         self.densenet121.classifier = nn.Sequential(
             nn.Linear(num_ftrs, out_size),
             nn.Sigmoid()
         )
 
+        if colour_input == 'L':
+            self.rgb_to_grey_input()
+
     def forward(self, x):
         x = self.densenet121(x)
         return x
 
-class ResNet18(nn.Module):
+    def rgb_to_grey_input(self):
 
-    """Model modified.
-    The architecture of our model is the same as standard ResNet18
-    except the classifier layer which has an additional sigmoid function.
-    """
+        """Replace the first convolutional layer that takes a 3-dimensional (RGB) input
+        with a 1-dimensional layer, adding the weights of each existing dimension
+        in order to retain pretrained parameters"""
 
-    def __init__(self, out_size, pre_trained=False):
-        super(ResNet18, self).__init__()
-        self.resnet18 = models.resnet18(pretrained = pre_trained)
-        num_ftrs = self.resnet18.fc.in_features
-        self.resnet18.fc = nn.Sequential(
-            nn.Linear(num_ftrs, out_size),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        x = self.resnet18(x)
-        return x
+        conv0_weight = self.densenet121.features.conv0.weight.clone()
+        self.densenet121.features.conv0 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        with torch.no_grad():
+            self.densenet121.features.conv0.weight = nn.Parameter(conv0_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
 
 class ResNet50(nn.Module):
 
@@ -79,18 +72,127 @@ class ResNet50(nn.Module):
     except the classifier layer which has an additional sigmoid function.
     """
 
-    def __init__(self, out_size, pre_trained=False):
+    def __init__(self, out_size, colour_input = 'RGB', pre_trained=False):
         super(ResNet50, self).__init__()
-        self.resnet50 = models.resnet50(pretrained = pre_trained)
+        self.resnet50 = torchvision.models.resnet50(pretrained = pre_trained)
         num_ftrs = self.resnet50.fc.in_features
         self.resnet50.fc = nn.Sequential(
             nn.Linear(num_ftrs, out_size),
             nn.Sigmoid()
         )
 
+        if colour_input == 'L':
+            self.rgb_to_grey_input()
+
     def forward(self, x):
         x = self.resnet50(x)
         return x
+
+    def rgb_to_grey_input(self):
+
+        """Replace the first convolutional layer that takes a 3-dimensional (RGB) input
+        with a 1-dimensional layer, adding the weights of each existing dimension
+        in order to retain pretrained parameters"""
+
+        conv1_weight = self.resnet50.conv1.weight.clone()
+        self.resnet50.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        with torch.no_grad():
+            self.resnet50.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
+
+class ResNet18(nn.Module):
+
+    """Model modified.
+    The architecture of our model is the same as standard ResNet18
+    except the classifier layer which has an additional sigmoid function.
+    """
+
+    def __init__(self, out_size, colour_input = 'RGB', pre_trained=False):
+        super(ResNet18, self).__init__()
+        self.resnet18 = torchvision.models.resnet18(pretrained = pre_trained)
+        num_ftrs = self.resnet18.fc.in_features
+        self.resnet18.fc = nn.Sequential(
+            nn.Linear(num_ftrs, out_size),
+            nn.Sigmoid()
+        )
+
+        if colour_input == 'L':
+            self.rgb_to_grey_input()
+
+    def forward(self, x):
+        x = self.resnet18(x)
+        return x
+
+    def rgb_to_grey_input(self):
+
+        """Replace the first convolutional layer that takes a 3-dimensional (RGB) input
+        with a 1-dimensional layer, adding the weights of each existing dimension
+        in order to retain pretrained parameters"""
+
+        conv1_weight = self.resnet18.conv1.weight.clone()
+        self.resnet18.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        with torch.no_grad():
+            self.resnet18.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
+
+
+# class DenseNet121(nn.Module):
+#
+#     """Model modified.
+#     The architecture of our model is the same as standard DenseNet121
+#     except the classifier layer which has an additional sigmoid function.
+#     """
+#
+#     def __init__(self, out_size, pre_trained=False):
+#         super(DenseNet121, self).__init__()
+#         self.densenet121 = models.densenet121(pretrained = pre_trained)
+#         num_ftrs = self.densenet121.classifier.in_features
+#         self.densenet121.classifier = nn.Sequential(
+#             nn.Linear(num_ftrs, out_size),
+#             nn.Sigmoid()
+#         )
+#
+#     def forward(self, x):
+#         x = self.densenet121(x)
+#         return x
+#
+# class ResNet18(nn.Module):
+#
+#     """Model modified.
+#     The architecture of our model is the same as standard ResNet18
+#     except the classifier layer which has an additional sigmoid function.
+#     """
+#
+#     def __init__(self, out_size, pre_trained=False):
+#         super(ResNet18, self).__init__()
+#         self.resnet18 = models.resnet18(pretrained = pre_trained)
+#         num_ftrs = self.resnet18.fc.in_features
+#         self.resnet18.fc = nn.Sequential(
+#             nn.Linear(num_ftrs, out_size),
+#             nn.Sigmoid()
+#         )
+#
+#     def forward(self, x):
+#         x = self.resnet18(x)
+#         return x
+#
+# class ResNet50(nn.Module):
+#
+#     """Model modified.
+#     The architecture of our model is the same as standard ResNet18
+#     except the classifier layer which has an additional sigmoid function.
+#     """
+#
+#     def __init__(self, out_size, pre_trained=False):
+#         super(ResNet50, self).__init__()
+#         self.resnet50 = models.resnet50(pretrained = pre_trained)
+#         num_ftrs = self.resnet50.fc.in_features
+#         self.resnet50.fc = nn.Sequential(
+#             nn.Linear(num_ftrs, out_size),
+#             nn.Sigmoid()
+#         )
+#
+#     def forward(self, x):
+#         x = self.resnet50(x)
+#         return x
 
 
 def weights_init(m):
@@ -104,13 +206,3 @@ def weights_init(m):
             m.bias.data.uniform_(-0.05, 0.05)
     except Exception:
         print('warning: failed in weights_init for %s.bias' % m._get_name())
-    # try:
-    #     if hasattr(m, "weight"):
-    #         nn.init.uniform_(m, a=-0.5, b=0.5)
-    # except Exception:
-    #     print('warning: failed in weights_init for %s.weight' % m._get_name())
-    # try:
-    #     if hasattr(m, "bias"):
-    #         nn.init.uniform_(m, a=-0.5, b=0.5)
-    # except Exception:
-    #     print('warning: failed in weights_init for %s.bias' % m._get_name())

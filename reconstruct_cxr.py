@@ -61,12 +61,22 @@ num_classes = 1
 label_encoding = 'multi' # 'one-hot' or 'multi'
 num_channels = 3
 change_inchannel = True # change channels of given model from 3 to 1 (greyscale)
+if change_inchannel:
+    colour_input = 'L'
+else:
+    colour_input = 'RGB'
 init_model = False #whether to initialize a non-pretrained model with uniform weights
+norm = 'imgnet' # imgnet or xray; values for normalization for the case of 1-channel model
 
 random_seed = 207
 
-from_weights = False # recovering from weights instead of gradients
-model_lr = 0.1
+from_weights = True # recovering from weights instead of gradients
+model_lr = 0.01
+
+restarts = 1
+max_iterations = 10
+init = 'randn' # randn, rand, zeros, xray, mean_xray
+tv = 1e-1
 
 img_size = (224,224)
 if args.num_images == 1:
@@ -80,25 +90,28 @@ else:
     demo_img_path =[demo_folder+'NORMAL-1455093-0001.jpeg', demo_folder+'VIRUS-6709337-0001.jpeg',
                         demo_folder+'BACTERIA-3000214-0003.jpeg', demo_folder+'NORMAL-9427315-0001.jpeg']
     img_label = [[0,0],[0,1],[1,0],[1,1]]
+    # img_label = [[1], [0], [0], [1]]
 
     assert len(demo_img_path) == args.num_images, "Specified number of images must match image names"
     assert len(img_label) == args.num_images, "Incorrect number of labels provided"
 
 loss_name = 'CE'
-# only one label for now
 if label_encoding == 'multi':
     img_label = torch.Tensor([img_label]).float()
     img_label = img_label.view(args.num_images,num_classes)
     loss_name = 'BCE'
 
-restarts = 3
-max_iterations = 20000
-init = 'randn' # randn, rand, zeros, xray, mean_xray
-tv = 1e-1
+# Data mean and std
+if norm == 'xray':
+    dm = 0.5029
+    ds = 0.2899
+elif norm == 'imgnet':
+    dm = np.mean([0.485, 0.456, 0.406])
+    ds = np.mean([0.229, 0.224, 0.225])
+else:
+    dm = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_mean'), **setup)[:, None, None]
+    ds = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_std'), **setup)[:, None, None]
 
-# CheXpert mean and std
-xray_mean = 0.5029
-xray_std = 0.2899
 
 # partly overwrites bash arguments
 set_config = dict(signed=True,
@@ -133,15 +146,6 @@ if __name__ == "__main__":
     elif label_encoding == 'multi':
         loss_fn = BCE_Classification()
 
-    # mean, std if input channels are modified (greyscale)
-    if change_inchannel:
-        dm = xray_mean
-        ds = xray_std
-    else:
-    # mean, std if a pretrained model with unmodified input is used
-        dm = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_mean'), **setup)[:, None, None]
-        ds = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_std'), **setup)[:, None, None]
-
     tt = transforms.Compose([transforms.Resize(img_size), transforms.ToTensor()])
     tp = transforms.Compose([transforms.ToPILImage()])
 
@@ -153,56 +157,24 @@ if __name__ == "__main__":
     elif args.model == 'ResNet50':
         model_seed = None
         if label_encoding == 'multi':
-            model = custom_models.ResNet50(out_size=num_classes, pre_trained=args.trained_model)
+            model = custom_models.ResNet50(out_size=num_classes, colour_input=colour_input, pre_trained=args.trained_model)
         else:
             model = torchvision.models.resnet50(pretrained=args.trained_model)
 
     elif args.model == 'ResNet18':
         model_seed = None
         if label_encoding == 'multi':
-            model = custom_models.ResNet18(out_size=num_classes, pre_trained=args.trained_model)
+            model = custom_models.ResNet18(out_size=num_classes, colour_input=colour_input, pre_trained=args.trained_model)
         else:
             model = torchvision.models.resnet18(pretrained=args.trained_model)
 
     elif args.model == 'DenseNet121':
         # model = models.densenet121(pretrained = args.trained_model)
-        model = custom_models.DenseNet121(out_size=num_classes, pre_trained=args.trained_model)
+        model = custom_models.DenseNet121(out_size=num_classes, colour_input=colour_input, pre_trained=args.trained_model)
         model_seed = None
     else:
         exit('Model not supported')
 
-    print(model)
-
-
-    # change number of input channels from 3 (RGB) to 1 (grey), tested for ResNet18
-    # https://discuss.pytorch.org/t/how-to-transfer-the-pretrained-weights-for-a-standard-resnet50-to-a-4-channel/52252
-    # https://stackoverflow.com/questions/51995977/how-can-i-use-a-pre-trained-neural-network-with-grayscale-images
-    if change_inchannel:
-        if type(model).__name__ == 'ResNet18':
-            conv1_weight = model.resnet18.conv1.weight.clone()
-            model.resnet18.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-            with torch.no_grad():
-                model.resnet18.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
-        elif type(model).__name__ == 'ResNet':
-            conv1_weight = model.conv1.weight.clone()
-            model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-            with torch.no_grad():
-                model.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
-        elif type(model).__name__ == 'ResNet50':
-            conv1_weight = model.resnet50.conv1.weight.clone()
-            model.resnet50.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-            with torch.no_grad():
-                model.resnet50.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
-
-        elif type(model).__name__ == 'DenseNet121':
-            # print(model)
-            # print(model.state_dict().keys())
-            conv0_weight = model.densenet121.features.conv0.weight.clone()
-            model.densenet121.features.conv0 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-            with torch.no_grad():
-                model.densenet121.features.conv0.weight = nn.Parameter(conv0_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
-
-    print(model)
     model.to(**setup)
     if init_model:
         model.apply(weights_init)
@@ -210,7 +182,6 @@ if __name__ == "__main__":
     if not from_weights:
         model.eval()
         eval=True
-
 
     # read in images, prepare labels
     if args.num_images == 1:
@@ -221,7 +192,7 @@ if __name__ == "__main__":
                 ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).resize(img_size))/255, **setup)
                 print(ground_truth)
                 ground_truth = ground_truth.view(1,1,*ground_truth.size())
-                ground_truth = ground_truth.sub(xray_mean).div(xray_std) # normalize
+                ground_truth = ground_truth.sub(dm).div(ds) # normalize
 
                 plt.imshow(tp(torch.cat((ground_truth,ground_truth,ground_truth),1)[0].cpu()))
                 plt.show()
@@ -249,8 +220,6 @@ if __name__ == "__main__":
         else:
             exit("Only custom image supported (target_id -1)")
 
-
-    # adapt this for multiple images without a predefined dataset
     else:
 
         if change_inchannel:
@@ -259,7 +228,7 @@ if __name__ == "__main__":
             for img_path in demo_img_path:
                 img = torch.as_tensor(np.array(Image.open(img_path).resize(img_size))/255, **setup)
                 img = img.view(1,*img.size())
-                img = img.sub(xray_mean).div(xray_std) # normalize
+                img = img.sub(dm).div(ds) # normalize
                 ground_truth.append(img.to(**setup))
             ground_truth = torch.stack(ground_truth)
             img_shape = (1, ground_truth.shape[2], ground_truth.shape[3])
