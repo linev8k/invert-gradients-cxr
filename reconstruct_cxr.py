@@ -43,6 +43,7 @@ from inversefed.data.loss import Classification, BCE_Classification
 # load modified models
 import custom_models
 from custom_models import weights_init
+from module_modification import convert_batchnorm_modules
 
 from collections import defaultdict
 import datetime
@@ -70,11 +71,11 @@ norm = 'imgnet' # imgnet or xray; values for normalization for the case of 1-cha
 
 random_seed = 207
 
-from_weights = True # recovering from weights instead of gradients
+from_weights = False # recovering from weights instead of gradients
 model_lr = 0.01
 
 restarts = 1
-max_iterations = 10
+max_iterations = 1
 init = 'randn' # randn, rand, zeros, xray, mean_xray
 tv = 1e-1
 
@@ -174,6 +175,10 @@ if __name__ == "__main__":
         model_seed = None
     else:
         exit('Model not supported')
+
+    print(model)
+    model = convert_batchnorm_modules(model)
+    print(model)
 
     model.to(**setup)
     if init_model:
