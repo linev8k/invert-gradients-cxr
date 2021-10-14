@@ -76,10 +76,10 @@ class GradientReconstructor():
 
         self.exp_stats = []
 
-    def reconstruct(self, input_data, labels, img_shape=(3, 32, 32), dryrun=False, eval=True, tol=None):
+    def reconstruct(self, input_data, labels, img_shape=(3, 32, 32), dryrun=False, set_eval=True, tol=None):
         """Reconstruct image from gradient."""
         start_time = time.time()
-        if eval:
+        if set_eval:
             self.model.eval()
 
         self.in_channels = img_shape[0]

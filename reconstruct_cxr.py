@@ -181,7 +181,7 @@ if __name__ == "__main__":
 
     if not from_weights:
         model.eval()
-        eval=True
+        set_eval=True
 
     # read in images, prepare labels
     if args.num_images == 1:
@@ -252,7 +252,7 @@ if __name__ == "__main__":
     # Run reconstruction
     if from_weights:
         model.train()
-        eval=False
+        set_eval=False
         initial_parameters = deepcopy(model.state_dict())
 
         model_optim = optim.SGD(model.parameters(), lr = model_lr)
@@ -308,7 +308,7 @@ if __name__ == "__main__":
 
     # reconstruction process
     rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
-    output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, eval=eval)
+    output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, set_eval=set_eval)
 
 
     # Compute stats
