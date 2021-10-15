@@ -42,7 +42,7 @@ from inversefed.data.loss import Classification, BCE_Classification
 
 # load modified models
 import custom_models
-from custom_models import weights_init
+from custom_models import weights_init, freeze_batchnorm
 from module_modification import convert_batchnorm_modules
 
 from collections import defaultdict
@@ -75,9 +75,9 @@ from_weights = False # recovering from weights instead of gradients
 model_lr = 0.01
 
 restarts = 1
-max_iterations = 1
+max_iterations = 5000
 init = 'randn' # randn, rand, zeros, xray, mean_xray
-tv = 1e-1
+tv = 1e-4
 
 img_size = (224,224)
 if args.num_images == 1:
@@ -176,9 +176,10 @@ if __name__ == "__main__":
     else:
         exit('Model not supported')
 
-    print(model)
-    model = convert_batchnorm_modules(model)
-    print(model)
+    # print(model)
+    # model = convert_batchnorm_modules(model)
+    # freeze_batchnorm(model)
+    # print(model)
 
     model.to(**setup)
     if init_model:
@@ -275,14 +276,18 @@ if __name__ == "__main__":
                     cur_grad = -(new_parameters[key] - initial_parameters[key])/model_lr
                     input_gradient.append(cur_grad.detach())
         # print(input_gradient[41])
+        print(len(input_gradient))
 
     else:
         model.zero_grad()
-        # model.train()
+        model.train()
+        set_eval=False
+        freeze_batchnorm(model)
         target_loss, _, _ = loss_fn(model(ground_truth), labels)
-        input_gradient = torch.autograd.grad(target_loss, model.parameters())
+        # https://discuss.pytorch.org/t/how-the-pytorch-freeze-network-in-some-layers-only-the-rest-of-the-training/7088/9
+        input_gradient = torch.autograd.grad(target_loss, filter(lambda p: p.requires_grad, model.parameters()))
         input_gradient = [grad.detach() for grad in input_gradient]
-        # print(input_gradient)
+        print(len(input_gradient))
         # print(input_gradient[41])
 
         #--------- not of interest here

@@ -133,6 +133,20 @@ class ResNet18(nn.Module):
         with torch.no_grad():
             self.resnet18.conv1.weight = nn.Parameter(conv1_weight.sum(dim=1,keepdim=True)) # way to keep pretrained weights
 
+def freeze_batchnorm(model):
+
+    """Modify model to not track gradients of batch norm layers
+    and set them to eval() mode (no running stats updated)"""
+
+    for module in model.modules():
+        # print(module)
+        if isinstance(module, nn.BatchNorm2d):
+            if hasattr(module, 'weight'):
+                module.weight.requires_grad_(False)
+            if hasattr(module, 'bias'):
+                module.bias.requires_grad_(False)
+            module.eval()
+
 
 # class DenseNet121(nn.Module):
 #

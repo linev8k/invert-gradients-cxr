@@ -264,7 +264,7 @@ class GradientReconstructor():
             optimizer.zero_grad()
             self.model.zero_grad()
             loss = self.loss_fn(self.model(x_trial), label)
-            gradient = torch.autograd.grad(loss, self.model.parameters(), create_graph=True)
+            gradient = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, self.model.parameters()), create_graph=True)
             rec_loss = reconstruction_costs([gradient], input_gradient,
                                             cost_fn=self.config['cost_fn'], indices=self.config['indices'],
                                             weights=self.config['weights'])
@@ -283,7 +283,7 @@ class GradientReconstructor():
             self.model.zero_grad()
             x_trial.grad = None
             loss = self.loss_fn(self.model(x_trial), label)
-            gradient = torch.autograd.grad(loss, self.model.parameters(), create_graph=False)
+            gradient = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, self.model.parameters()), create_graph=False)
             return reconstruction_costs([gradient], input_gradient,
                                         cost_fn=self.config['cost_fn'], indices=self.config['indices'],
                                         weights=self.config['weights'])

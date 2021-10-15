@@ -1,3 +1,4 @@
+# OPACUS https://github.com/pytorch/opacus/blob/main/opacus/utils/module_modification.py
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 r"""
 This module includes utils for modifying model layers, replacing layers etc.
