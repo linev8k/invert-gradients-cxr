@@ -71,7 +71,8 @@ norm = 'imgnet' # imgnet or xray; values for normalization for the case of 1-cha
 
 random_seed = 207
 
-from_weights = False # recovering from weights instead of gradients
+from_weights = True # recovering from weights instead of gradients
+set_batchnorm_freeze = True
 model_lr = 0.01
 
 restarts = 1
@@ -177,8 +178,6 @@ if __name__ == "__main__":
         exit('Model not supported')
 
     # print(model)
-    # model = convert_batchnorm_modules(model)
-    # freeze_batchnorm(model)
     # print(model)
 
     model.to(**setup)
@@ -259,6 +258,9 @@ if __name__ == "__main__":
     if from_weights:
         model.train()
         set_eval=False
+        if set_batchnorm_freeze:
+            freeze_batchnorm(model)
+
         initial_parameters = deepcopy(model.state_dict())
 
         model_optim = optim.SGD(model.parameters(), lr = model_lr)
@@ -267,22 +269,21 @@ if __name__ == "__main__":
         target_loss.backward()
         model_optim.step()
 
-        # approximately compute back gradients (more difficult after several epochs)
+        # approximately compute back gradients
         new_parameters = model.state_dict()
+        check_params = model.parameters()
         with torch.no_grad():
             input_gradient = []
             for key in new_parameters:
                 if key.endswith('weight') or key.endswith('bias'):
-                    cur_grad = -(new_parameters[key] - initial_parameters[key])/model_lr
-                    input_gradient.append(cur_grad.detach())
+                    if(next(check_params).requires_grad):
+                        cur_grad = -(new_parameters[key] - initial_parameters[key])/model_lr
+                        input_gradient.append(cur_grad.detach())
         # print(input_gradient[41])
         print(len(input_gradient))
 
     else:
         model.zero_grad()
-        model.train()
-        set_eval=False
-        freeze_batchnorm(model)
         target_loss, _, _ = loss_fn(model(ground_truth), labels)
         # https://discuss.pytorch.org/t/how-the-pytorch-freeze-network-in-some-layers-only-the-rest-of-the-training/7088/9
         input_gradient = torch.autograd.grad(target_loss, filter(lambda p: p.requires_grad, model.parameters()))
