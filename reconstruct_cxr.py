@@ -71,8 +71,9 @@ norm = 'imgnet' # imgnet or xray; values for normalization for the case of 1-cha
 
 random_seed = 207
 
-from_weights = True # recovering from weights instead of gradients
-set_batchnorm_freeze = True
+from_weights = False # recovering from weights instead of gradients
+train_mode = False # set overall model in train mode, or in eval mode if false
+set_batchnorm_freeze = True # partial layer freezing
 model_lr = 0.01
 
 restarts = 1
@@ -178,15 +179,23 @@ if __name__ == "__main__":
         exit('Model not supported')
 
     # print(model)
-    # print(model)
 
+    # apply model modifications
     model.to(**setup)
     if init_model:
         model.apply(weights_init)
 
-    # default setting...
-    model.eval()
-    set_eval=True
+    if train_mode:
+        model.train()
+        set_eval=False
+    else:
+        model.eval()
+        set_eval=True
+
+    if set_batchnorm_freeze:
+        freeze_batchnorm(model)
+
+    # print(model)
 
     # read in images, prepare labels
     if args.num_images == 1:
@@ -256,45 +265,41 @@ if __name__ == "__main__":
 
     # Run reconstruction
     if from_weights:
-        # model.train()
-        # set_eval=False
-        if set_batchnorm_freeze:
-            freeze_batchnorm(model)
 
-        initial_parameters = deepcopy(model.state_dict())
-
-        model_optim = optim.SGD(model.parameters(), lr = model_lr)
+        placeholder_model = deepcopy(model) # copy model so optim step will not be recorded on original
         model.zero_grad()
-        target_loss, _, _ = loss_fn(model(ground_truth), labels)
+        initial_parameters = deepcopy(model.state_dict()) # we care only about parameters
+
+        # optimization step on placeholder model
+        model_optim = optim.SGD(placeholder_model.parameters(), lr = model_lr)
+        placeholder_model.zero_grad()
+        target_loss, _, _ = loss_fn(placeholder_model(ground_truth), labels)
         target_loss.backward()
         model_optim.step()
 
         # approximately compute back gradients
-        new_parameters = model.state_dict()
+        new_parameters = placeholder_model.state_dict()
         with torch.no_grad():
             check_params = model.parameters()
             input_gradient = []
             for key in new_parameters:
                 if key.endswith('weight') or key.endswith('bias'):
-                    if(next(check_params).requires_grad):
+                    if(next(check_params).requires_grad): # only compute gradients for layers that are not frozen
                         cur_grad = -(new_parameters[key] - initial_parameters[key])/model_lr
                         # replace weird negative zeros with proper zero values, to be sure
                         cur_grad = torch.where(cur_grad == -0.0000e+00, torch.tensor(0.).to(**setup), cur_grad)
                         input_gradient.append(cur_grad.detach())
         # print(input_gradient[41])
-        print(len(input_gradient))
+        # print(len(input_gradient))
+        # print(input_gradient[41])
 
     else:
         model.zero_grad()
-        # model.train()
-        if set_batchnorm_freeze:
-            freeze_batchnorm(model)
-
         target_loss, _, _ = loss_fn(model(ground_truth), labels)
         # https://discuss.pytorch.org/t/how-the-pytorch-freeze-network-in-some-layers-only-the-rest-of-the-training/7088/9
         input_gradient = torch.autograd.grad(target_loss, filter(lambda p: p.requires_grad, model.parameters()))
         input_gradient = [grad.detach() for grad in input_gradient]
-        print(len(input_gradient))
+        # print(len(input_gradient))
         # print(input_gradient[41])
 
         #--------- not of interest here
