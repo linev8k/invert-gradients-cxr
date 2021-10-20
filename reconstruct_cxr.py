@@ -184,9 +184,9 @@ if __name__ == "__main__":
     if init_model:
         model.apply(weights_init)
 
-    if not from_weights:
-        model.eval()
-        set_eval=True
+    # default setting...
+    model.eval()
+    set_eval=True
 
     # read in images, prepare labels
     if args.num_images == 1:
@@ -256,8 +256,8 @@ if __name__ == "__main__":
 
     # Run reconstruction
     if from_weights:
-        model.train()
-        set_eval=False
+        # model.train()
+        # set_eval=False
         if set_batchnorm_freeze:
             freeze_batchnorm(model)
 
@@ -271,19 +271,25 @@ if __name__ == "__main__":
 
         # approximately compute back gradients
         new_parameters = model.state_dict()
-        check_params = model.parameters()
         with torch.no_grad():
+            check_params = model.parameters()
             input_gradient = []
             for key in new_parameters:
                 if key.endswith('weight') or key.endswith('bias'):
                     if(next(check_params).requires_grad):
                         cur_grad = -(new_parameters[key] - initial_parameters[key])/model_lr
+                        # replace weird negative zeros with proper zero values, to be sure
+                        cur_grad = torch.where(cur_grad == -0.0000e+00, torch.tensor(0.).to(**setup), cur_grad)
                         input_gradient.append(cur_grad.detach())
         # print(input_gradient[41])
         print(len(input_gradient))
 
     else:
         model.zero_grad()
+        # model.train()
+        if set_batchnorm_freeze:
+            freeze_batchnorm(model)
+
         target_loss, _, _ = loss_fn(model(ground_truth), labels)
         # https://discuss.pytorch.org/t/how-the-pytorch-freeze-network-in-some-layers-only-the-rest-of-the-training/7088/9
         input_gradient = torch.autograd.grad(target_loss, filter(lambda p: p.requires_grad, model.parameters()))
