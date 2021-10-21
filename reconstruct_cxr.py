@@ -67,7 +67,7 @@ if change_inchannel:
 else:
     colour_input = 'RGB'
 img_size = (224,224)
-init_model = False #whether to initialize a non-pretrained model with uniform weights
+# init_model = False #whether to initialize a non-pretrained model with uniform weights
 norm = 'imgnet' # imgnet or xray; values for normalization for the case of 1-channel model
 
 random_seed = 207
@@ -78,12 +78,12 @@ set_batchnorm_freeze = True # partial layer freezing
 model_lr = 0.01
 
 # whether to read in model parameters from checkpoints
-read_init_model = False
+read_init_model = True
 read_trained_model = True
 if read_init_model:
-    init_model_path = ''
+    init_model_path = '../resnet_bn_freeze/global_0rounds.pth.tar'
 if read_trained_model:
-    trained_model_path = '../resnet_bn_freeze/round0_client19/1-epoch_FL.pth.tar'
+    trained_model_path = '../resnet_bn_freeze/round1_client19/1-epoch_FL.pth.tar'
     assert from_weights == True, "Can only infer gradients from model weights"
 
 if read_trained_model:
@@ -193,11 +193,18 @@ if __name__ == "__main__":
         exit('Model not supported')
 
     # print(model)
+    if read_init_model:
+
+        init_model_checkpoint = torch.load(init_model_path)
+        if 'state_dict' in init_model_checkpoint:
+            model.load_state_dict(init_model_checkpoint['state_dict'])
+        else:
+            model.load_state_dict(init_model_checkpoint)
 
     # apply model modifications
     model.to(**setup)
-    if init_model:
-        model.apply(weights_init)
+    # if init_model:
+    #     model.apply(weights_init)
 
     if train_mode:
         model.train()
