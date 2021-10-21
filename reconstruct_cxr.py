@@ -224,14 +224,24 @@ if __name__ == "__main__":
 
             if change_inchannel:
 
+                # same preprocessing as in FL
+                # train_transformSequence = transforms.Compose([transforms.Resize(img_size),
+                #                                         transforms.ToTensor(),
+                #                                         transforms.Normalize(dm, ds)
+                #                                         ])
+                #
+                # ground_truth = Image.open(demo_img_path).convert(colour_input) # RGB or L for greyscale
+                # ground_truth = train_transformSequence(ground_truth)
+                # ground_truth = ground_truth.view(1,*ground_truth.size())
+
                 ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).resize(img_size))/255, **setup)
-                print(ground_truth)
                 ground_truth = ground_truth.view(1,1,*ground_truth.size())
                 ground_truth = ground_truth.sub(dm).div(ds) # normalize
 
                 plt.imshow(tp(torch.cat((ground_truth,ground_truth,ground_truth),1)[0].cpu()))
                 plt.show()
 
+                print(ground_truth)
                 img_shape = (1, ground_truth.shape[2], ground_truth.shape[3])
 
             else: # original RGB image
@@ -370,85 +380,85 @@ if __name__ == "__main__":
     else:
         exit("Modify the configurations if you want to change the optimization options")
 
-    # # reconstruction process
-    # rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
-    # output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, set_eval=set_eval)
-    #
-    #
-    # # Compute stats
-    # factor=1/ds # for psnr
-    #
-    # test_mse = (output.detach() - ground_truth).pow(2).mean().item()
-    # # feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
-    # feat_mse = np.nan # placeholder so no errors occur
-    # test_psnr = inversefed.metrics.psnr(output.detach(), ground_truth, factor=factor)
-    #
-    # # Save the best image
-    # if args.save_image and not args.dryrun:
-    #     os.makedirs(args.image_path, exist_ok=True)
-    #     output_denormalized = torch.clamp(output * ds + dm, 0, 1)
-    #     gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
-    #     for img_idx in range(args.num_images):
-    #         rec_filename = f'{args.name}_rec_img_exp{stats["best_exp"]}_idx{img_idx}.png'
-    #         torchvision.utils.save_image(output_denormalized[img_idx], os.path.join(args.image_path, rec_filename))
-    #         gt_filename = f'{args.name}_gt_img_idx{img_idx}.png'
-    #         torchvision.utils.save_image(gt_denormalized[img_idx], os.path.join(args.image_path, gt_filename))
-    # else:
-    #     rec_filename = None
-    #     gt_filename = None
-    #
-    # # save stats
-    # for trial in rec_machine.exp_stats:
-    #     all_mses, all_psnrs = [], []
-    #     for img_hist in trial['history']:
-    #         mses = [((rec_img - gt_img).pow(2).mean().item()) for rec_img, gt_img in zip(img_hist, ground_truth)]
-    #         psnrs = [(inversefed.metrics.psnr(rec_img.unsqueeze(0), gt_img.unsqueeze(0), factor=factor)) for rec_img, gt_img in zip(img_hist, ground_truth)]
-    #         all_mses.append(mses)
-    #         all_psnrs.append(psnrs)
-    #     all_metrics = [trial['idx'], trial['rec_loss'], all_mses, all_psnrs]
-    #     with open(f'trial_histories/{args.name}_{trial["name"]}.csv', 'w') as f:
-    #         header = ['iteration', 'loss', 'mse', 'psnr']
-    #         writer = csv.writer(f)
-    #         writer.writerow(header)
-    #         writer.writerows(zip(*all_metrics))
-    #
-    # print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} |")
-    #
-    # # save parameters
-    # inversefed.utils.save_to_table(args.table_path, name=f'exp_{args.name}', dryrun=args.dryrun,
-    #
-    #                                model=args.model,
-    #                                dataset=args.dataset,
-    #                                trained=args.trained_model,
-    #                                accumulation=args.accumulation,
-    #                                restarts=config['restarts'],
-    #                                OPTIM=args.optim,
-    #                                cost_fn=args.cost_fn,
-    #                                indices=args.indices,
-    #                                weights=args.weights,
-    #                                scoring=args.scoring_choice,
-    #                                init=config['init'],
-    #                                tv=tv,
-    #
-    #                                rec_loss=stats["opt"],
-    #                                best_idx=stats["best_exp"],
-    #                                psnr=test_psnr,
-    #                                test_mse=test_mse,
-    #                                feat_mse=feat_mse,
-    #
-    #                                target_id=args.target_id,
-    #                                seed=model_seed,
-    #                                timing=str(datetime.timedelta(seconds=time.time() - start_time)),
-    #                                dtype=setup['dtype'],
-    #                                epochs=args.epochs,
-    #                                val_acc=None,
-    #                                rec_img=rec_filename,
-    #                                gt_img=gt_filename
-    #                                )
-    #
-    #
-    # # Print final timestamp
-    # print(datetime.datetime.now().strftime("%A, %d. %B %Y %I:%M%p"))
-    # print('---------------------------------------------------')
-    # print(f'Finished computations with time: {str(datetime.timedelta(seconds=time.time() - start_time))}')
-    # print('-------------Job finished.-------------------------')
+    # reconstruction process
+    rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
+    output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, set_eval=set_eval)
+
+
+    # Compute stats
+    factor=1/ds # for psnr
+
+    test_mse = (output.detach() - ground_truth).pow(2).mean().item()
+    # feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
+    feat_mse = np.nan # placeholder so no errors occur
+    test_psnr = inversefed.metrics.psnr(output.detach(), ground_truth, factor=factor)
+
+    # Save the best image
+    if args.save_image and not args.dryrun:
+        os.makedirs(args.image_path, exist_ok=True)
+        output_denormalized = torch.clamp(output * ds + dm, 0, 1)
+        gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
+        for img_idx in range(args.num_images):
+            rec_filename = f'{args.name}_rec_img_exp{stats["best_exp"]}_idx{img_idx}.png'
+            torchvision.utils.save_image(output_denormalized[img_idx], os.path.join(args.image_path, rec_filename))
+            gt_filename = f'{args.name}_gt_img_idx{img_idx}.png'
+            torchvision.utils.save_image(gt_denormalized[img_idx], os.path.join(args.image_path, gt_filename))
+    else:
+        rec_filename = None
+        gt_filename = None
+
+    # save stats
+    for trial in rec_machine.exp_stats:
+        all_mses, all_psnrs = [], []
+        for img_hist in trial['history']:
+            mses = [((rec_img - gt_img).pow(2).mean().item()) for rec_img, gt_img in zip(img_hist, ground_truth)]
+            psnrs = [(inversefed.metrics.psnr(rec_img.unsqueeze(0), gt_img.unsqueeze(0), factor=factor)) for rec_img, gt_img in zip(img_hist, ground_truth)]
+            all_mses.append(mses)
+            all_psnrs.append(psnrs)
+        all_metrics = [trial['idx'], trial['rec_loss'], all_mses, all_psnrs]
+        with open(f'trial_histories/{args.name}_{trial["name"]}.csv', 'w') as f:
+            header = ['iteration', 'loss', 'mse', 'psnr']
+            writer = csv.writer(f)
+            writer.writerow(header)
+            writer.writerows(zip(*all_metrics))
+
+    print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} |")
+
+    # save parameters
+    inversefed.utils.save_to_table(args.table_path, name=f'exp_{args.name}', dryrun=args.dryrun,
+
+                                   model=args.model,
+                                   dataset=args.dataset,
+                                   trained=args.trained_model,
+                                   accumulation=args.accumulation,
+                                   restarts=config['restarts'],
+                                   OPTIM=args.optim,
+                                   cost_fn=args.cost_fn,
+                                   indices=args.indices,
+                                   weights=args.weights,
+                                   scoring=args.scoring_choice,
+                                   init=config['init'],
+                                   tv=tv,
+
+                                   rec_loss=stats["opt"],
+                                   best_idx=stats["best_exp"],
+                                   psnr=test_psnr,
+                                   test_mse=test_mse,
+                                   feat_mse=feat_mse,
+
+                                   target_id=args.target_id,
+                                   seed=model_seed,
+                                   timing=str(datetime.timedelta(seconds=time.time() - start_time)),
+                                   dtype=setup['dtype'],
+                                   epochs=args.epochs,
+                                   val_acc=None,
+                                   rec_img=rec_filename,
+                                   gt_img=gt_filename
+                                   )
+
+
+    # Print final timestamp
+    print(datetime.datetime.now().strftime("%A, %d. %B %Y %I:%M%p"))
+    print('---------------------------------------------------')
+    print(f'Finished computations with time: {str(datetime.timedelta(seconds=time.time() - start_time))}')
+    print('-------------Job finished.-------------------------')
