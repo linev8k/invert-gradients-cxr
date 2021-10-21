@@ -66,37 +66,51 @@ if change_inchannel:
     colour_input = 'L'
 else:
     colour_input = 'RGB'
+img_size = (224,224)
 init_model = False #whether to initialize a non-pretrained model with uniform weights
 norm = 'imgnet' # imgnet or xray; values for normalization for the case of 1-channel model
 
 random_seed = 207
 
-from_weights = False # recovering from weights instead of gradients
-train_mode = False # set overall model in train mode, or in eval mode if false
+from_weights = True # recovering from weights instead of gradients
+train_mode = True # set overall model in train mode, or in eval mode if false
 set_batchnorm_freeze = True # partial layer freezing
 model_lr = 0.01
+
+# whether to read in model parameters from checkpoints
+read_init_model = False
+read_trained_model = True
+if read_init_model:
+    init_model_path = ''
+if read_trained_model:
+    trained_model_path = '../resnet_bn_freeze/round0_client19/1-epoch_FL.pth.tar'
+    assert from_weights == True, "Can only infer gradients from model weights"
+
+if read_trained_model:
+    # adapt this to client's data
+    demo_img_path = '/mnt/dsets/mendeley_xray/train/PNEUMONIA/VIRUS-4615614-0010.jpeg'
+    img_label = 0
+else:
+    if args.num_images == 1:
+        demo_img_path = 'xray_test.jpg'
+        img_label = 1
+    else:
+        demo_folder = 'demo_images/'
+        # demo_img_path = [demo_folder+'NORMAL-1455093-0001.jpeg', demo_folder+'VIRUS-6709337-0001.jpeg']
+        # img_label = [1,1]
+
+        demo_img_path =[demo_folder+'NORMAL-1455093-0001.jpeg', demo_folder+'VIRUS-6709337-0001.jpeg',
+                            demo_folder+'BACTERIA-3000214-0003.jpeg', demo_folder+'NORMAL-9427315-0001.jpeg']
+        img_label = [[0,0],[0,1],[1,0],[1,1]]
+        # img_label = [[1], [0], [0], [1]]
+
+        assert len(demo_img_path) == args.num_images, "Specified number of images must match image names"
+        assert len(img_label) == args.num_images, "Incorrect number of labels provided"
 
 restarts = 1
 max_iterations = 5000
 init = 'randn' # randn, rand, zeros, xray, mean_xray
 tv = 1e-4
-
-img_size = (224,224)
-if args.num_images == 1:
-    demo_img_path = 'xray_test.jpg'
-    img_label = 1
-else:
-    demo_folder = 'demo_images/'
-    # demo_img_path = [demo_folder+'NORMAL-1455093-0001.jpeg', demo_folder+'VIRUS-6709337-0001.jpeg']
-    # img_label = [1,1]
-
-    demo_img_path =[demo_folder+'NORMAL-1455093-0001.jpeg', demo_folder+'VIRUS-6709337-0001.jpeg',
-                        demo_folder+'BACTERIA-3000214-0003.jpeg', demo_folder+'NORMAL-9427315-0001.jpeg']
-    img_label = [[0,0],[0,1],[1,0],[1,1]]
-    # img_label = [[1], [0], [0], [1]]
-
-    assert len(demo_img_path) == args.num_images, "Specified number of images must match image names"
-    assert len(img_label) == args.num_images, "Incorrect number of labels provided"
 
 loss_name = 'CE'
 if label_encoding == 'multi':
@@ -289,9 +303,30 @@ if __name__ == "__main__":
                         # replace weird negative zeros with proper zero values, to be sure
                         cur_grad = torch.where(cur_grad == -0.0000e+00, torch.tensor(0.).to(**setup), cur_grad)
                         input_gradient.append(cur_grad.detach())
-        # print(input_gradient[41])
+        print(input_gradient[41])
         # print(len(input_gradient))
         # print(input_gradient[41])
+
+        if read_trained_model:
+
+            trained_model_checkpoint = torch.load(trained_model_path)
+            if 'state_dict' in trained_model_checkpoint:
+                placeholder_model.load_state_dict(trained_model_checkpoint['state_dict'])
+            else:
+                placeholder_model.load_state_dict(trained_model_checkpoint)
+
+            new_parameters = placeholder_model.state_dict()
+            with torch.no_grad():
+                check_params = model.parameters()
+                input_gradient = []
+                for key in new_parameters:
+                    if key.endswith('weight') or key.endswith('bias'):
+                        if(next(check_params).requires_grad): # only compute gradients for layers that are not frozen
+                            cur_grad = -(new_parameters[key] - initial_parameters[key])/model_lr
+                            # replace weird negative zeros with proper zero values, to be sure
+                            cur_grad = torch.where(cur_grad == -0.0000e+00, torch.tensor(0.).to(**setup), cur_grad)
+                            input_gradient.append(cur_grad.detach())
+            print(input_gradient[41])
 
     else:
         model.zero_grad()
@@ -328,85 +363,85 @@ if __name__ == "__main__":
     else:
         exit("Modify the configurations if you want to change the optimization options")
 
-    # reconstruction process
-    rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
-    output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, set_eval=set_eval)
-
-
-    # Compute stats
-    factor=1/ds # for psnr
-
-    test_mse = (output.detach() - ground_truth).pow(2).mean().item()
-    # feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
-    feat_mse = np.nan # placeholder so no errors occur
-    test_psnr = inversefed.metrics.psnr(output.detach(), ground_truth, factor=factor)
-
-    # Save the best image
-    if args.save_image and not args.dryrun:
-        os.makedirs(args.image_path, exist_ok=True)
-        output_denormalized = torch.clamp(output * ds + dm, 0, 1)
-        gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
-        for img_idx in range(args.num_images):
-            rec_filename = f'{args.name}_rec_img_exp{stats["best_exp"]}_idx{img_idx}.png'
-            torchvision.utils.save_image(output_denormalized[img_idx], os.path.join(args.image_path, rec_filename))
-            gt_filename = f'{args.name}_gt_img_idx{img_idx}.png'
-            torchvision.utils.save_image(gt_denormalized[img_idx], os.path.join(args.image_path, gt_filename))
-    else:
-        rec_filename = None
-        gt_filename = None
-
-    # save stats
-    for trial in rec_machine.exp_stats:
-        all_mses, all_psnrs = [], []
-        for img_hist in trial['history']:
-            mses = [((rec_img - gt_img).pow(2).mean().item()) for rec_img, gt_img in zip(img_hist, ground_truth)]
-            psnrs = [(inversefed.metrics.psnr(rec_img.unsqueeze(0), gt_img.unsqueeze(0), factor=factor)) for rec_img, gt_img in zip(img_hist, ground_truth)]
-            all_mses.append(mses)
-            all_psnrs.append(psnrs)
-        all_metrics = [trial['idx'], trial['rec_loss'], all_mses, all_psnrs]
-        with open(f'trial_histories/{args.name}_{trial["name"]}.csv', 'w') as f:
-            header = ['iteration', 'loss', 'mse', 'psnr']
-            writer = csv.writer(f)
-            writer.writerow(header)
-            writer.writerows(zip(*all_metrics))
-
-    print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} |")
-
-    # save parameters
-    inversefed.utils.save_to_table(args.table_path, name=f'exp_{args.name}', dryrun=args.dryrun,
-
-                                   model=args.model,
-                                   dataset=args.dataset,
-                                   trained=args.trained_model,
-                                   accumulation=args.accumulation,
-                                   restarts=config['restarts'],
-                                   OPTIM=args.optim,
-                                   cost_fn=args.cost_fn,
-                                   indices=args.indices,
-                                   weights=args.weights,
-                                   scoring=args.scoring_choice,
-                                   init=config['init'],
-                                   tv=tv,
-
-                                   rec_loss=stats["opt"],
-                                   best_idx=stats["best_exp"],
-                                   psnr=test_psnr,
-                                   test_mse=test_mse,
-                                   feat_mse=feat_mse,
-
-                                   target_id=args.target_id,
-                                   seed=model_seed,
-                                   timing=str(datetime.timedelta(seconds=time.time() - start_time)),
-                                   dtype=setup['dtype'],
-                                   epochs=args.epochs,
-                                   val_acc=None,
-                                   rec_img=rec_filename,
-                                   gt_img=gt_filename
-                                   )
-
-
-    # Print final timestamp
-    print(datetime.datetime.now().strftime("%A, %d. %B %Y %I:%M%p"))
-    print('---------------------------------------------------')
-    print(f'Finished computations with time: {str(datetime.timedelta(seconds=time.time() - start_time))}')
-    print('-------------Job finished.-------------------------')
+    # # reconstruction process
+    # rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
+    # output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, set_eval=set_eval)
+    #
+    #
+    # # Compute stats
+    # factor=1/ds # for psnr
+    #
+    # test_mse = (output.detach() - ground_truth).pow(2).mean().item()
+    # # feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
+    # feat_mse = np.nan # placeholder so no errors occur
+    # test_psnr = inversefed.metrics.psnr(output.detach(), ground_truth, factor=factor)
+    #
+    # # Save the best image
+    # if args.save_image and not args.dryrun:
+    #     os.makedirs(args.image_path, exist_ok=True)
+    #     output_denormalized = torch.clamp(output * ds + dm, 0, 1)
+    #     gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
+    #     for img_idx in range(args.num_images):
+    #         rec_filename = f'{args.name}_rec_img_exp{stats["best_exp"]}_idx{img_idx}.png'
+    #         torchvision.utils.save_image(output_denormalized[img_idx], os.path.join(args.image_path, rec_filename))
+    #         gt_filename = f'{args.name}_gt_img_idx{img_idx}.png'
+    #         torchvision.utils.save_image(gt_denormalized[img_idx], os.path.join(args.image_path, gt_filename))
+    # else:
+    #     rec_filename = None
+    #     gt_filename = None
+    #
+    # # save stats
+    # for trial in rec_machine.exp_stats:
+    #     all_mses, all_psnrs = [], []
+    #     for img_hist in trial['history']:
+    #         mses = [((rec_img - gt_img).pow(2).mean().item()) for rec_img, gt_img in zip(img_hist, ground_truth)]
+    #         psnrs = [(inversefed.metrics.psnr(rec_img.unsqueeze(0), gt_img.unsqueeze(0), factor=factor)) for rec_img, gt_img in zip(img_hist, ground_truth)]
+    #         all_mses.append(mses)
+    #         all_psnrs.append(psnrs)
+    #     all_metrics = [trial['idx'], trial['rec_loss'], all_mses, all_psnrs]
+    #     with open(f'trial_histories/{args.name}_{trial["name"]}.csv', 'w') as f:
+    #         header = ['iteration', 'loss', 'mse', 'psnr']
+    #         writer = csv.writer(f)
+    #         writer.writerow(header)
+    #         writer.writerows(zip(*all_metrics))
+    #
+    # print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} |")
+    #
+    # # save parameters
+    # inversefed.utils.save_to_table(args.table_path, name=f'exp_{args.name}', dryrun=args.dryrun,
+    #
+    #                                model=args.model,
+    #                                dataset=args.dataset,
+    #                                trained=args.trained_model,
+    #                                accumulation=args.accumulation,
+    #                                restarts=config['restarts'],
+    #                                OPTIM=args.optim,
+    #                                cost_fn=args.cost_fn,
+    #                                indices=args.indices,
+    #                                weights=args.weights,
+    #                                scoring=args.scoring_choice,
+    #                                init=config['init'],
+    #                                tv=tv,
+    #
+    #                                rec_loss=stats["opt"],
+    #                                best_idx=stats["best_exp"],
+    #                                psnr=test_psnr,
+    #                                test_mse=test_mse,
+    #                                feat_mse=feat_mse,
+    #
+    #                                target_id=args.target_id,
+    #                                seed=model_seed,
+    #                                timing=str(datetime.timedelta(seconds=time.time() - start_time)),
+    #                                dtype=setup['dtype'],
+    #                                epochs=args.epochs,
+    #                                val_acc=None,
+    #                                rec_img=rec_filename,
+    #                                gt_img=gt_filename
+    #                                )
+    #
+    #
+    # # Print final timestamp
+    # print(datetime.datetime.now().strftime("%A, %d. %B %Y %I:%M%p"))
+    # print('---------------------------------------------------')
+    # print(f'Finished computations with time: {str(datetime.timedelta(seconds=time.time() - start_time))}')
+    # print('-------------Job finished.-------------------------')
