@@ -34,6 +34,7 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 import csv
+import pandas as pd
 
 import inversefed
 from inversefed.data.loss import Classification, BCE_Classification
@@ -99,8 +100,19 @@ if read_trained_model:
 
 if read_trained_model:
     # adapt this to model's data for validation, PSNR computation etc.
-    demo_img_path = '/mnt/dsets/mendeley_xray/train/PNEUMONIA/VIRUS-4615614-0010.jpeg'
-    img_label = 0
+    data_indices = [0] # check this from FL
+    img_label = [0]
+    client_file_path = '~/netstore/data_files/combined_files/client19/'
+    img_data_path = '/mnt/dsets/'
+
+    client_file = pd.read_csv(client_file_path+'client_train.csv')
+    demo_img_path = [img_data_path + client_file['Path'][i] for i in data_indices]
+    print("Image paths: ", demo_img_path)
+    if args.num_images == 1:
+        demo_img_path = demo_img_path[0]
+        img_label = img_label[0]
+    # demo_img_path = '/mnt/dsets/mendeley_xray/train/PNEUMONIA/VIRUS-4615614-0010.jpeg'
+    # img_label = 0
 
 else: # demo mode
     if args.num_images == 1:
@@ -342,7 +354,7 @@ if __name__ == "__main__":
                             # replace weird negative zeros with proper zero values, to be sure
                             cur_grad = torch.where(cur_grad == -0.0000e+00, torch.tensor(0.).to(**setup), cur_grad)
                             input_gradient.append(cur_grad.detach())
-            print(input_gradient[41])
+            # print(input_gradient[41])
             print("Length of original gradient: ", len(input_gradient))
 
         else:
@@ -367,7 +379,7 @@ if __name__ == "__main__":
                             # replace weird negative zeros with proper zero values, to be sure
                             cur_grad = torch.where(cur_grad == -0.0000e+00, torch.tensor(0.).to(**setup), cur_grad)
                             input_gradient.append(cur_grad.detach())
-            print(input_gradient[41])
+            # print(input_gradient[41])
 
     else: # compute gradients directly
 
