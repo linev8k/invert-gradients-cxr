@@ -1,29 +1,27 @@
 """Run reconstruction in a terminal prompt.
+Adapted from https://github.com/JonasGeiping/invertinggradients/blob/master/reconstruct_image.py.
 
 Optional arguments can be found in inversefed/options.py
 
-Set as arguments:
-- model
-- dataset (ImageNet)
+When run in terminal, set the following options:
+--model (model type)
+--name (for file saving)
+--dataset (relevant if using pretrained model)
+--optimizer (attack optimizer, usually adam)
+--num_images (number of input images)
+--trained_model (if using a pretrained model)
+--save_images (saving results)
+--deterministic (necessary for reproducibility)
+--dryrun (for a test run)
 
-- trained_model (pretrained)
-- epochs (of the trained model)
+Script usage example:
+python reconstruct_cxr.py --model ResNet50 --name resnet50 --dataset ImageNet --optimizer adam --num_images 1 --trained_model --save_image --deterministic
 
-- num_images (images to recover)
-- target_id (-1 means custom image)
-
-- optim (ours, zhu (dlg))
-
-- save_image (save output)
-- deterministic flag
-- dryrun flag (run everything for one step for testing)
-- name (for the experiment)
 """
 import os
 
 selected_gpus = [7] #configure this
 os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(gpu) for gpu in selected_gpus])
-
 
 import torch
 import torchvision
@@ -50,36 +48,49 @@ import datetime
 import time
 from copy import deepcopy
 
-# torch.backends.cudnn.benchmark = inversefed.consts.BENCHMARK
-# use_cuda = torch.cuda.is_available()
-# device = 'cuda' if use_cuda else 'cpu'
-
 # Parse input arguments
 args = inversefed.options().parse_args()
 
-# more parameters
+# ---- SET MORE PARAMETERS HERE ---- #
+random_seed = 207
+
+# LABELS
+# 1 if binary classification
 num_classes = 1
-label_encoding = 'multi' # 'one-hot' or 'multi'
+# 'one-hot' or 'multi', for one hot encoding or multi label classification
+label_encoding = 'multi'
+
+# IMAGE DATA
+# leave this if using a pretrained model
 num_channels = 3
-change_inchannel = True # change channels of given model from 3 to 1 (greyscale)
+# change channels of given model from 3 to 1 (greyscale)
+change_inchannel = True
+# nothing to do here
 if change_inchannel:
     colour_input = 'L'
 else:
     colour_input = 'RGB'
+# other image parameters
 img_size = (224,224)
-# init_model = False #whether to initialize a non-pretrained model with uniform weights
-norm = 'imgnet' # imgnet or xray; values for normalization for the case of 1-channel model
+# normalization mode; 'imgnet' or 'xray'; values for normalization for the case of 1-channel model
+# otherwise normalization values for dataset specified in script flag are used
+norm = 'imgnet'
 
-random_seed = 207
-
-from_weights = True # recovering from weights instead of gradients
-train_mode = True # set overall model in train mode, or in eval mode if false
-set_batchnorm_freeze = True # partial layer freezing
+# HOW TO COMPUTE ORIGINAL GRADIENTS
+# if True, recovering from weights instead of gradients
+from_weights = True
+# set model lr if recovering from weights
 model_lr = 0.01
 
+# MODEL SETTINGS
+# set overall model in train mode, or in eval mode if false
+train_mode = True
+# partial layer freezing, i.e. batch norm layers
+set_batchnorm_freeze = True
 # whether to read in model parameters from checkpoints
 read_init_model = True
 read_trained_model = True
+# set model checkpoint paths here
 if read_init_model:
     init_model_path = '../resnet_bn_freeze/global_0rounds.pth.tar'
 if read_trained_model:
@@ -87,10 +98,11 @@ if read_trained_model:
     assert from_weights == True, "Can only infer gradients from model weights"
 
 if read_trained_model:
-    # adapt this to client's data
+    # adapt this to model's data for validation, PSNR computation etc.
     demo_img_path = '/mnt/dsets/mendeley_xray/train/PNEUMONIA/VIRUS-4615614-0010.jpeg'
     img_label = 0
-else:
+
+else: # demo mode
     if args.num_images == 1:
         demo_img_path = 'xray_test.jpg'
         img_label = 1
@@ -107,18 +119,28 @@ else:
         assert len(demo_img_path) == args.num_images, "Specified number of images must match image names"
         assert len(img_label) == args.num_images, "Incorrect number of labels provided"
 
+# ATTACK SETTINGS
 restarts = 1
 max_iterations = 5000
-init = 'randn' # randn, rand, zeros, xray, mean_xray
+# dummy image initialization mode
+# 'randn', 'rand', 'zeros', 'xray', 'mean_xray'
+init = 'randn'
+# total variation value for cosine similarity loss
+# 1e-4 for smaller networks, 1e-1 for larger
 tv = 1e-4
+# if True, optimize on signed gradients
+set_signed = True
+# learning rate for attack optimizer
+attack_lr = 0.1
 
+# MODEL LOSS FUNCTION, takes care of itself
 loss_name = 'CE'
 if label_encoding == 'multi':
     img_label = torch.Tensor([img_label]).float()
     img_label = img_label.view(args.num_images,num_classes)
     loss_name = 'BCE'
 
-# Data mean and std
+# IMAGE DATA MEAN and STD for normalization
 if norm == 'xray':
     dm = 0.5029
     ds = 0.2899
@@ -129,14 +151,15 @@ else:
     dm = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_mean'), **setup)[:, None, None]
     ds = torch.as_tensor(getattr(inversefed.consts, f'{args.dataset.lower()}_std'), **setup)[:, None, None]
 
-
+# parameters that always stay the same for the experiments are hardcoded
+# or taken from bash arguments
 # partly overwrites bash arguments
-set_config = dict(signed=True,
+set_config = dict(signed=set_signed,
               boxed=args.boxed, # True
               cost_fn=args.cost_fn, # cosine sim.
               indices='def',
               weights='equal',
-              lr=0.1,
+              lr=attack_lr,
               optim=args.optimizer, # adam, sgd, adamw, lbfgs
               restarts=restarts,
               max_iterations=max_iterations,
@@ -145,6 +168,8 @@ set_config = dict(signed=True,
               filter='none',
               lr_decay=True,
               scoring_choice='loss')
+
+# ---- END PARAMETER SETTING ---- #
 
 # not entirely reproducible... only on GPU
 if args.deterministic:
@@ -163,7 +188,6 @@ if __name__ == "__main__":
     elif label_encoding == 'multi':
         loss_fn = BCE_Classification()
 
-    tt = transforms.Compose([transforms.Resize(img_size), transforms.ToTensor()])
     tp = transforms.Compose([transforms.ToPILImage()])
 
     # currently supported models
@@ -191,10 +215,10 @@ if __name__ == "__main__":
         model_seed = None
     else:
         exit('Model not supported')
-
     # print(model)
-    if read_init_model:
 
+    # read initial model checkpoint
+    if read_init_model:
         init_model_checkpoint = torch.load(init_model_path)
         if 'state_dict' in init_model_checkpoint:
             model.load_state_dict(init_model_checkpoint['state_dict'])
@@ -203,8 +227,6 @@ if __name__ == "__main__":
 
     # apply model modifications
     model.to(**setup)
-    # if init_model:
-    #     model.apply(weights_init)
 
     if train_mode:
         model.train()
@@ -216,55 +238,51 @@ if __name__ == "__main__":
     if set_batchnorm_freeze:
         freeze_batchnorm(model)
 
-    # print(model)
-
     # read in images, prepare labels
     if args.num_images == 1:
-        if args.target_id == -1:  # demo, custom image
 
-            if change_inchannel:
+        # greyscale processing
+        if change_inchannel:
 
-                # same preprocessing as in FL
-                # train_transformSequence = transforms.Compose([transforms.Resize(img_size),
-                #                                         transforms.ToTensor(),
-                #                                         transforms.Normalize(dm, ds)
-                #                                         ])
-                #
-                # ground_truth = Image.open(demo_img_path).convert(colour_input) # RGB or L for greyscale
-                # ground_truth = train_transformSequence(ground_truth)
-                # ground_truth = ground_truth.view(1,*ground_truth.size())
+            # same preprocessing as in FL
+            # train_transformSequence = transforms.Compose([transforms.Resize(img_size),
+            #                                         transforms.ToTensor(),
+            #                                         transforms.Normalize(dm, ds)
+            #                                         ])
+            #
+            # ground_truth = Image.open(demo_img_path).convert(colour_input) # RGB or L for greyscale
+            # ground_truth = train_transformSequence(ground_truth)
+            # ground_truth = ground_truth.view(1,*ground_truth.size())
 
-                ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).resize(img_size))/255, **setup)
-                ground_truth = ground_truth.view(1,1,*ground_truth.size())
-                ground_truth = ground_truth.sub(dm).div(ds) # normalize
+            ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).resize(img_size))/255, **setup)
+            ground_truth = ground_truth.view(1,1,*ground_truth.size())
+            ground_truth = ground_truth.sub(dm).div(ds) # normalize
 
-                plt.imshow(tp(torch.cat((ground_truth,ground_truth,ground_truth),1)[0].cpu()))
-                plt.show()
+            plt.imshow(tp(torch.cat((ground_truth,ground_truth,ground_truth),1)[0].cpu()))
+            plt.show()
 
-                print(ground_truth)
-                img_shape = (1, ground_truth.shape[2], ground_truth.shape[3])
+            img_shape = (1, ground_truth.shape[2], ground_truth.shape[3])
 
-            else: # original RGB image
-                # Specify PIL filter for lower pillow versions
-                ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).convert('RGB').resize(img_size, Image.BICUBIC)) / 255, **setup)
-                # print(ground_truth)
-                ground_truth = ground_truth.permute(2, 0, 1).sub(dm).div(ds).unsqueeze(0).contiguous()
-
-                img_shape = (3, ground_truth.shape[2], ground_truth.shape[3])
-
-            print(ground_truth)
-            print(ground_truth.shape)
-
-            if label_encoding == 'multi':
-                labels = img_label.to(setup['device'])
-            else:
-                labels = torch.as_tensor((img_label,), device=setup['device'])
-            print(labels)
-            target_id = -1
-
+        # original RGB image processing
         else:
-            exit("Only custom image supported (target_id -1)")
+            # Specify PIL filter for lower pillow versions
+            ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).convert('RGB').resize(img_size, Image.BICUBIC)) / 255, **setup)
+            # print(ground_truth)
+            ground_truth = ground_truth.permute(2, 0, 1).sub(dm).div(ds).unsqueeze(0).contiguous()
 
+            img_shape = (3, ground_truth.shape[2], ground_truth.shape[3])
+
+        print("GT: ", ground_truth)
+        print("GT image shape: ,", ground_truth.shape)
+
+        if label_encoding == 'multi':
+            labels = img_label.to(setup['device'])
+        else:
+            labels = torch.as_tensor((img_label,), device=setup['device'])
+        print("Label shape :,", labels.shape)
+        print("Labels: ", labels)
+
+    # same for multiple images
     else:
 
         if change_inchannel:
@@ -289,49 +307,30 @@ if __name__ == "__main__":
 
         plt.imshow(tp(ground_truth[0].cpu()))
         plt.show()
+        print("GT: ", ground_truth)
         print("GT image shape: ,", ground_truth.shape)
         labels = torch.as_tensor(img_label, device=setup['device'])
         print("Label shape :,", labels.shape)
         print("Labels: ", labels)
 
-    # Run reconstruction
+    # Compute original gradients
     if from_weights:
 
         placeholder_model = deepcopy(model) # copy model so optim step will not be recorded on original
         model.zero_grad()
+        placeholder_model.zero_grad()
         initial_parameters = deepcopy(model.state_dict()) # we care only about parameters
 
-        # optimization step on placeholder model
-        model_optim = optim.SGD(placeholder_model.parameters(), lr = model_lr)
-        placeholder_model.zero_grad()
-        target_loss, _, _ = loss_fn(placeholder_model(ground_truth), labels)
-        target_loss.backward()
-        model_optim.step()
+        # take optimization step if no trained model is available
+        if not read_trained_model:
 
-        # approximately compute back gradients
-        new_parameters = placeholder_model.state_dict()
-        with torch.no_grad():
-            check_params = model.parameters()
-            input_gradient = []
-            for key in new_parameters:
-                if key.endswith('weight') or key.endswith('bias'):
-                    if(next(check_params).requires_grad): # only compute gradients for layers that are not frozen
-                        cur_grad = -(new_parameters[key] - initial_parameters[key])/model_lr
-                        # replace weird negative zeros with proper zero values, to be sure
-                        cur_grad = torch.where(cur_grad == -0.0000e+00, torch.tensor(0.).to(**setup), cur_grad)
-                        input_gradient.append(cur_grad.detach())
-        print(input_gradient[41])
-        # print(len(input_gradient))
-        # print(input_gradient[41])
+            # optimization step on placeholder model
+            model_optim = optim.SGD(placeholder_model.parameters(), lr = model_lr)
+            target_loss, _, _ = loss_fn(placeholder_model(ground_truth), labels)
+            target_loss.backward()
+            model_optim.step()
 
-        if read_trained_model:
-
-            trained_model_checkpoint = torch.load(trained_model_path)
-            if 'state_dict' in trained_model_checkpoint:
-                placeholder_model.load_state_dict(trained_model_checkpoint['state_dict'])
-            else:
-                placeholder_model.load_state_dict(trained_model_checkpoint)
-
+            # approximately compute back gradients
             new_parameters = placeholder_model.state_dict()
             with torch.no_grad():
                 check_params = model.parameters()
@@ -344,17 +343,43 @@ if __name__ == "__main__":
                             cur_grad = torch.where(cur_grad == -0.0000e+00, torch.tensor(0.).to(**setup), cur_grad)
                             input_gradient.append(cur_grad.detach())
             print(input_gradient[41])
+            print("Length of original gradient: ", len(input_gradient))
 
-    else:
+        else:
+
+            # load trained model
+            trained_model_checkpoint = torch.load(trained_model_path)
+            if 'state_dict' in trained_model_checkpoint:
+                placeholder_model.load_state_dict(trained_model_checkpoint['state_dict'])
+            else:
+                placeholder_model.load_state_dict(trained_model_checkpoint)
+
+            new_parameters = placeholder_model.state_dict()
+
+            # compute gradients from loaded model
+            with torch.no_grad():
+                check_params = model.parameters()
+                input_gradient = []
+                for key in new_parameters:
+                    if key.endswith('weight') or key.endswith('bias'):
+                        if(next(check_params).requires_grad): # only compute gradients for layers that are not frozen
+                            cur_grad = -(new_parameters[key] - initial_parameters[key])/model_lr
+                            # replace weird negative zeros with proper zero values, to be sure
+                            cur_grad = torch.where(cur_grad == -0.0000e+00, torch.tensor(0.).to(**setup), cur_grad)
+                            input_gradient.append(cur_grad.detach())
+            print(input_gradient[41])
+
+    else: # compute gradients directly
+
         model.zero_grad()
         target_loss, _, _ = loss_fn(model(ground_truth), labels)
         # https://discuss.pytorch.org/t/how-the-pytorch-freeze-network-in-some-layers-only-the-rest-of-the-training/7088/9
         input_gradient = torch.autograd.grad(target_loss, filter(lambda p: p.requires_grad, model.parameters()))
         input_gradient = [grad.detach() for grad in input_gradient]
-        # print(len(input_gradient))
+        print("Length of original gradient: ", len(input_gradient))
         # print(input_gradient[41])
 
-        #--------- not of interest here
+        # --- not of interest here --- #
         # full_norm = torch.stack([g.norm() for g in input_gradient]).mean()
         # print(f'Full gradient norm is {full_norm:e}.')
 
@@ -372,28 +397,31 @@ if __name__ == "__main__":
             input_gradient = [g.to(**setup) for g in input_gradient]
             model.to(**setup)
             model.eval()
-        #----------
+        # --- --- #
 
+    # --- also ignore this --- #
     if args.optim == 'ours':
         config = set_config
 
     else:
         exit("Modify the configurations if you want to change the optimization options")
 
-    # reconstruction process
+    # --- end of ignorance --- #
+
+    # Reconstruct data!
     rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
     output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, set_eval=set_eval)
 
 
     # Compute stats
-    factor=1/ds # for psnr
+    factor=1/ds # for PSNR computation
 
     test_mse = (output.detach() - ground_truth).pow(2).mean().item()
     # feat_mse = (model(output) - model(ground_truth)).pow(2).mean().item()
     feat_mse = np.nan # placeholder so no errors occur
     test_psnr = inversefed.metrics.psnr(output.detach(), ground_truth, factor=factor)
 
-    # Save the best image
+    # Save the best reconstructed image
     if args.save_image and not args.dryrun:
         os.makedirs(args.image_path, exist_ok=True)
         output_denormalized = torch.clamp(output * ds + dm, 0, 1)
@@ -407,7 +435,7 @@ if __name__ == "__main__":
         rec_filename = None
         gt_filename = None
 
-    # save stats
+    # Save stats
     for trial in rec_machine.exp_stats:
         all_mses, all_psnrs = [], []
         for img_hist in trial['history']:
@@ -424,7 +452,8 @@ if __name__ == "__main__":
 
     print(f"Rec. loss: {stats['opt']:2.4f} | MSE: {test_mse:2.4f} | PSNR: {test_psnr:4.2f} |")
 
-    # save parameters
+    # Save parameters in table
+    # some values are not recorded (e.g., feat_mse, val_acc)
     inversefed.utils.save_to_table(args.table_path, name=f'exp_{args.name}', dryrun=args.dryrun,
 
                                    model=args.model,
@@ -446,7 +475,7 @@ if __name__ == "__main__":
                                    test_mse=test_mse,
                                    feat_mse=feat_mse,
 
-                                   target_id=args.target_id,
+                                   target_id=-1,
                                    seed=model_seed,
                                    timing=str(datetime.timedelta(seconds=time.time() - start_time)),
                                    dtype=setup['dtype'],
