@@ -103,7 +103,7 @@ if read_trained_model:
     data_indices = [0,1] # check this from FL
     img_label = [0,0]
     client_file_path = '~/netstore/data_files/combined_files_less/client26/'
-    img_data_path = '/mnt/dsets/ChestXrays/CheXpert'
+    img_data_path = '/mnt/dsets/ChestXrays/CheXpert/'
 
     client_file = pd.read_csv(client_file_path+'client_train.csv')
     demo_img_path = [img_data_path + client_file['Path'][i] for i in data_indices]
