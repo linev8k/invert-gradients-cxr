@@ -20,7 +20,7 @@ python reconstruct_cxr.py --model ResNet50 --name resnet50 --dataset ImageNet --
 """
 import os
 
-selected_gpus = [7] #configure this
+selected_gpus = [0] #configure this
 os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(gpu) for gpu in selected_gpus])
 
 import torch
@@ -93,17 +93,17 @@ read_init_model = True
 read_trained_model = True
 # set model checkpoint paths here
 if read_init_model:
-    init_model_path = '../resnet_bn_freeze/global_0rounds.pth.tar'
+    init_model_path = '../densenet_less_bn/global_2rounds.pth.tar'
 if read_trained_model:
-    trained_model_path = '../resnet_bn_freeze/round1_client19/1-epoch_FL.pth.tar'
+    trained_model_path = '../densenet_less_bn/round3_client26/1-epoch_FL.pth.tar'
     assert from_weights == True, "Can only infer gradients from model weights"
 
 if read_trained_model:
     # adapt this to model's data for validation, PSNR computation etc.
-    data_indices = [0] # check this from FL
-    img_label = [0]
-    client_file_path = '~/netstore/data_files/combined_files/client19/'
-    img_data_path = '/mnt/dsets/'
+    data_indices = [0,1] # check this from FL
+    img_label = [0,0]
+    client_file_path = '~/netstore/data_files/combined_files_less/client26/'
+    img_data_path = '/mnt/dsets/ChestXrays/CheXpert'
 
     client_file = pd.read_csv(client_file_path+'client_train.csv')
     demo_img_path = [img_data_path + client_file['Path'][i] for i in data_indices]
@@ -132,14 +132,14 @@ else: # demo mode
         assert len(img_label) == args.num_images, "Incorrect number of labels provided"
 
 # ATTACK SETTINGS
-restarts = 1
-max_iterations = 5000
+restarts = 3
+max_iterations = 20000
 # dummy image initialization mode
 # 'randn', 'rand', 'zeros', 'xray', 'mean_xray'
 init = 'randn'
 # total variation value for cosine similarity loss
 # 1e-4 for smaller networks, 1e-1 for larger
-tv = 1e-4
+tv = 1e-2
 # if True, optimize on signed gradients
 set_signed = True
 # learning rate for attack optimizer
@@ -422,7 +422,7 @@ if __name__ == "__main__":
 
     # Reconstruct data!
     rec_machine = inversefed.GradientReconstructor(model, (dm, ds), config, num_images=args.num_images, loss_fn=loss_name)
-    output, stats = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, set_eval=set_eval)
+    output, stats, all_outputs = rec_machine.reconstruct(input_gradient, labels=labels, img_shape=img_shape, dryrun=args.dryrun, set_eval=set_eval)
 
 
     # Compute stats
@@ -433,8 +433,9 @@ if __name__ == "__main__":
     feat_mse = np.nan # placeholder so no errors occur
     test_psnr = inversefed.metrics.psnr(output.detach(), ground_truth, factor=factor)
 
-    # Save the best reconstructed image
     if args.save_image and not args.dryrun:
+
+        # save the best reconstructed image
         os.makedirs(args.image_path, exist_ok=True)
         output_denormalized = torch.clamp(output * ds + dm, 0, 1)
         gt_denormalized = torch.clamp(ground_truth * ds + dm, 0, 1)
@@ -443,6 +444,14 @@ if __name__ == "__main__":
             torchvision.utils.save_image(output_denormalized[img_idx], os.path.join(args.image_path, rec_filename))
             gt_filename = f'{args.name}_gt_img_idx{img_idx}.png'
             torchvision.utils.save_image(gt_denormalized[img_idx], os.path.join(args.image_path, gt_filename))
+
+        # save images of all experiments
+        os.makedirs('./images_all/', exist_ok=True)
+        output_denormalized = torch.clamp(all_outputs * ds + dm, 0, 1)
+        for trial in range(restarts):
+            for img_idx in range(args.num_images):
+                rec_filename = f'{args.name}_rec_img_exp{trial}_idx{img_idx}.png'
+                torchvision.utils.save_image(output_denormalized[trial][img_idx], os.path.join('./images_all/', rec_filename))
     else:
         rec_filename = None
         gt_filename = None

@@ -150,7 +150,7 @@ class GradientReconstructor():
             x_optimal = x[optimal_index]
 
         print(f'Total time: {time.time()-start_time}.')
-        return x_optimal.detach(), stats
+        return x_optimal.detach(), stats, x.detach()
 
     def _init_images(self, img_shape):
 
