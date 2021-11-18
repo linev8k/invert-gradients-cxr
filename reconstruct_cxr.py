@@ -41,7 +41,7 @@ from inversefed.data.loss import Classification, BCE_Classification
 
 # load modified models
 import custom_models
-from custom_models import weights_init, freeze_batchnorm
+from custom_models import weights_init, freeze_batchnorm, freeze_all_but_last
 from module_modification import convert_batchnorm_modules
 
 from collections import defaultdict
@@ -87,7 +87,8 @@ model_lr = 0.01
 # set overall model in train mode, or in eval mode if false
 train_mode = True
 # partial layer freezing, i.e. batch norm layers
-set_batchnorm_freeze = True
+set_freeze = 'batch_norm' # 'none', 'batch_norm', 'all_but_last'
+assert set_freeze in ['none', 'batch_norm', 'all_but_last'], "Choose valid freeze mode"
 # whether to read in model parameters from checkpoints
 read_init_model = True
 read_trained_model = True
@@ -247,8 +248,10 @@ if __name__ == "__main__":
         model.eval()
         set_eval=True
 
-    if set_batchnorm_freeze:
+    if set_freeze == 'batch_norm':
         freeze_batchnorm(model)
+    if set_freeze == 'all_but_last':
+        freeze_all_but_last(model)
 
     # read in images, prepare labels
     if args.num_images == 1:

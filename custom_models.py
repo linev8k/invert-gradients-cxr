@@ -147,6 +147,17 @@ def freeze_batchnorm(model):
                 module.bias.requires_grad_(False)
             module.eval()
 
+def freeze_all_but_last(model):
+
+    """Modify model to not track gradients of all but the last classification layer.
+    Note: This is customized to the module naming of ResNet and DenseNet architectures."""
+
+    for name, param in model.named_parameters():
+        if 'fc' not in name and 'classifier' not in name:
+            param.requires_grad_(False)
+        else:
+            param.requires_grad_(True)
+
 
 # class DenseNet121(nn.Module):
 #
