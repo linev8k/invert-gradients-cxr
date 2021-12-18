@@ -6,8 +6,8 @@ Optional arguments can be found in inversefed/options.py
 When run in terminal, set the following options:
 --model (model type)
 --name (for file saving)
---dataset (relevant if using pretrained model)
---optimizer (attack optimizer, usually adam)
+--dataset (relevant if using a pre-trained model)
+--optimizer (attack optimizer)
 --num_images (number of input images)
 --trained_model (if using a pretrained model)
 --save_images (saving results)
@@ -42,7 +42,6 @@ from inversefed.data.loss import Classification, BCE_Classification
 # load modified models
 import custom_models
 from custom_models import weights_init, freeze_batchnorm, freeze_all_but_last
-from module_modification import convert_batchnorm_modules
 
 from collections import defaultdict
 import datetime
@@ -256,18 +255,8 @@ if __name__ == "__main__":
     # read in images, prepare labels
     if args.num_images == 1:
 
-        # greyscale processing
+        # grayscale processing
         if change_inchannel:
-
-            # same preprocessing as in FL
-            # train_transformSequence = transforms.Compose([transforms.Resize(img_size),
-            #                                         transforms.ToTensor(),
-            #                                         transforms.Normalize(dm, ds)
-            #                                         ])
-            #
-            # ground_truth = Image.open(demo_img_path).convert(colour_input) # RGB or L for greyscale
-            # ground_truth = train_transformSequence(ground_truth)
-            # ground_truth = ground_truth.view(1,*ground_truth.size())
 
             ground_truth = torch.as_tensor(np.array(Image.open(demo_img_path).resize(img_size))/255, **setup)
             ground_truth = ground_truth.view(1,1,*ground_truth.size())
